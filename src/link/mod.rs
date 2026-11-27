@@ -20,6 +20,9 @@
 
 pub mod admin_con;
 pub mod admin_log;
+#[cfg(test)]
+mod admin_log_tests;
+pub mod admin_service;
 pub mod authority;
 pub mod box_commands;
 pub mod box_line;
@@ -38,11 +41,13 @@ pub mod register;
 pub mod relay;
 #[cfg(feature = "enrollment")]
 pub mod request;
-pub mod sudo_invoker;
+pub mod service_invoker;
 pub mod verbs;
 
 #[cfg(test)]
 mod admin_con_tests;
+#[cfg(test)]
+mod admin_service_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod admission_tests;
 #[cfg(test)]
@@ -52,6 +57,8 @@ mod deadline_tests;
 #[cfg(test)]
 pub(crate) mod fake_relay;
 #[cfg(test)]
+pub(crate) mod fake_service;
+#[cfg(test)]
 mod key_config_tests;
 #[cfg(test)]
 mod pairing_tests;
@@ -60,9 +67,11 @@ mod run_end_tests;
 #[cfg(test)]
 mod server_asks_tests;
 #[cfg(test)]
-mod sudo_invoker_tests;
+mod service_invoker_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod trust_tests;
 #[cfg(test)]
 mod verbs_audit_tests;
 

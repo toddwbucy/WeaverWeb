@@ -248,7 +248,8 @@ async fn installed(
     let path = PathBuf::from(answer.value["configs"][0].as_str().unwrap());
     assert!(path.ends_with("gate-con.toml"));
     let mut extra = format!(
-        "gate_socket = {}\n",
+        "key_file = {}\ngate_socket = {}\n",
+        toml::Value::String(answer.value["keys"][0].as_str().unwrap().to_owned()),
         toml::Value::String(gate.display().to_string())
     );
     if let Some(n) = turns_in_flight {
@@ -796,6 +797,7 @@ impl FakeServer {
             plane,
             server_certificate: self.authority.certificate_pem().to_owned(),
             certificate: credential.certificate_pem,
+            key_file: PathBuf::new(),
             key: credential.key_pem,
             local_address: None,
         }
@@ -1025,8 +1027,31 @@ async fn a_write_the_server_does_not_take_within_the_cadence_ends_the_connection
     con.stop().await;
 }
 
-fn config_text(server: &FakeServer, plane: Plane, gate: Option<&str>, extra: &str) -> String {
+/// **The key `link` carries, laid in `dir` as a connector's key file is
+/// laid** (the brief of 2026-11-27, child 6): a file of its own at 0640,
+/// the test's own uid and group standing for root and the connector's
+/// group (`Trust::connector` in a test build), under a name of its own.
+/// Answers its path, the config's `key_file`.
+pub(super) fn key_file_in(dir: &Path, link: &LinkConfig) -> String {
+    let path = dir.join(format!(
+        "{}-{}-{}.key",
+        link.agent,
+        link.plane.as_str(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    write_mode(&path, &link.key, 0o640);
+    path.display().to_string()
+}
+
+fn config_text(
+    server: &FakeServer,
+    dir: &Path,
+    plane: Plane,
+    gate: Option<&str>,
+    extra: &str,
+) -> String {
     let link = server.link(plane);
+    let key_file = key_file_in(dir, &link);
     let mut table = toml::Table::new();
     table.insert("server".into(), link.server.into());
     table.insert("server_name".into(), link.server_name.into());
@@ -1035,23 +1060,23 @@ fn config_text(server: &FakeServer, plane: Plane, gate: Option<&str>, extra: &st
     table.insert("plane".into(), plane.as_str().into());
     table.insert("server_certificate".into(), link.server_certificate.into());
     table.insert("certificate".into(), link.certificate.into());
-    table.insert("key".into(), link.key.into());
+    table.insert("key_file".into(), key_file.into());
     if let Some(gate) = gate {
         table.insert("gate_socket".into(), gate.into());
     }
     format!("{}{extra}", toml::to_string(&table).unwrap())
 }
 
-fn write_mode(path: &Path, content: &str, mode: u32) {
+pub(super) fn write_mode(path: &Path, content: &str, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(path, content).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
-/// **A config that is not private, not a regular file, a symlink, minted
-/// for the admin plane, or missing a member is refused at start**, each
-/// naming what was found. (A config owned by another uid is refused by the
-/// same descriptor check, which a test without root cannot stage.)
+/// **A config whose mode passes 0640, not a regular file, a symlink,
+/// minted for the admin plane, or missing a member is refused at start**,
+/// each naming what was found. (The owner, the group, the folder and the
+/// access list are `the_trust_rule_*`'s.)
 #[tokio::test]
 async fn a_config_that_is_not_trusted_is_refused_at_start() {
     let server = FakeServer::start().await;
@@ -1059,7 +1084,7 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
     let good = dir.path().join("gate-con.toml");
     write_mode(
         &good,
-        &config_text(&server, Plane::Gate, Some("/gate"), ""),
+        &config_text(&server, dir.path(), Plane::Gate, Some("/gate"), ""),
         0o600,
     );
     let cfg = GateConConfig::load(&good).unwrap();
@@ -1071,11 +1096,11 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
     );
 
     let refused = |path: &Path| GateConConfig::load(path).unwrap_err().to_string();
-    for mode in [0o640, 0o604, 0o700] {
+    for mode in [0o660, 0o604, 0o700, 0o641] {
         let path = dir.path().join(format!("mode-{mode:o}.toml"));
         write_mode(
             &path,
-            &config_text(&server, Plane::Gate, Some("/gate"), ""),
+            &config_text(&server, dir.path(), Plane::Gate, Some("/gate"), ""),
             mode,
         );
         let why = refused(&path);
@@ -1093,7 +1118,7 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
     let admin = dir.path().join("admin.toml");
     write_mode(
         &admin,
-        &config_text(&server, Plane::Admin, Some("/gate"), ""),
+        &config_text(&server, dir.path(), Plane::Admin, Some("/gate"), ""),
         0o600,
     );
     assert!(refused(&admin).contains("admin plane"));
@@ -1101,7 +1126,7 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
     let missing = dir.path().join("missing.toml");
     write_mode(
         &missing,
-        &config_text(&server, Plane::Gate, None, ""),
+        &config_text(&server, dir.path(), Plane::Gate, None, ""),
         0o600,
     );
     assert!(refused(&missing).contains("gate_socket"));
@@ -1111,6 +1136,7 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
         &many,
         &config_text(
             &server,
+            dir.path(),
             Plane::Gate,
             Some("/gate"),
             "turns_in_flight = 65\n",
@@ -1126,6 +1152,7 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
         &corrupt,
         &config_text(
             &server,
+            dir.path(),
             Plane::Gate,
             Some("/gate"),
             "SECRETMARKERnotakey = = \"MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n",
@@ -1146,6 +1173,7 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
         &pasted,
         &config_text(
             &server,
+            dir.path(),
             Plane::Gate,
             Some("/gate"),
             "turns_in_flight = \"MIIEvQIBADANBgkqhkiG9w0BAQEFAASCSECRETMARKER\"\n",
@@ -1160,10 +1188,64 @@ async fn a_config_that_is_not_trusted_is_refused_at_start() {
         "{why}"
     );
 
+    // **An old config, its key inline, is refused with one sentence** (the
+    // brief of 2026-11-27, child 6), naming the member and never its value.
+    let inline = dir.path().join("inline.toml");
+    write_mode(
+        &inline,
+        &config_text(
+            &server,
+            dir.path(),
+            Plane::Gate,
+            Some("/gate"),
+            "key = \"SECRETMARKER\"\n",
+        ),
+        0o600,
+    );
+    let why = refused(&inline);
+    assert!(
+        why.contains("the config carries its key inline (key); a connector reads its key from key_file, a file of its own"),
+        "{why}"
+    );
+    assert!(!why.contains("SECRETMARKER"), "{why}");
+
+    // A relative key file, and a key the certificate is not over.
+    let text = config_text(&server, dir.path(), Plane::Gate, Some("/gate"), "");
+    let mut table: toml::Table = text.parse().unwrap();
+    table.insert("key_file".into(), "gate-con.key".into());
+    let relative = dir.path().join("relative.toml");
+    write_mode(&relative, &toml::to_string(&table).unwrap(), 0o600);
+    assert!(refused(&relative).contains("key_file is not an absolute path"));
+    let other = server.link(Plane::Gate);
+    table.insert("key_file".into(), key_file_in(dir.path(), &other).into());
+    let crossed = dir.path().join("crossed.toml");
+    write_mode(&crossed, &toml::to_string(&table).unwrap(), 0o600);
+    let why = refused(&crossed);
+    assert!(
+        why.contains("the certificate is not over the key in"),
+        "{why}"
+    );
+    let not_a_key = dir.path().join("not-a-key.key");
+    write_mode(&not_a_key, "not a key\n", 0o640);
+    table.insert("key_file".into(), not_a_key.display().to_string().into());
+    let unkeyed = dir.path().join("unkeyed.toml");
+    write_mode(&unkeyed, &toml::to_string(&table).unwrap(), 0o600);
+    let why = refused(&unkeyed);
+    assert!(
+        why.contains("the key is not one PKCS #8 ECDSA P-256 PEM block"),
+        "{why}"
+    );
+
     let none = dir.path().join("none-in-flight.toml");
     write_mode(
         &none,
-        &config_text(&server, Plane::Gate, Some("/gate"), "turns_in_flight = 0\n"),
+        &config_text(
+            &server,
+            dir.path(),
+            Plane::Gate,
+            Some("/gate"),
+            "turns_in_flight = 0\n",
+        ),
         0o600,
     );
     assert!(refused(&none).contains("turns_in_flight"));
@@ -1228,8 +1310,9 @@ async fn a_reinstalled_config_is_picked_up_at_the_next_capped_retry() {
     assert!(answer.ok, "{}", answer.value);
     let fresh = PathBuf::from(answer.value["configs"][0].as_str().unwrap());
     let content = format!(
-        "{}gate_socket = {}\n",
+        "{}key_file = {}\ngate_socket = {}\n",
         std::fs::read_to_string(&fresh).unwrap(),
+        toml::Value::String(answer.value["keys"][0].as_str().unwrap().to_owned()),
         toml::Value::String(gate.path.display().to_string())
     );
     let staged = path.with_extension("installing");

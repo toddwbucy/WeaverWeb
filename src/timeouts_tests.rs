@@ -76,6 +76,7 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/hugging_face/pull.rs", "work", Reads), // the idle puller's wait for its wake
     ("src/hugging_face/pull.rs", "download", Reads), // a read of a file's body
     ("src/hugging_face/pull.rs", "fetch", Reads), // a fetch's answer, its body not read
+    ("src/link/admin_con.rs", "dial_relay", Socket), // the confirming opening, short of the caller's deadline
     ("src/link/admin_con.rs", "measure", Socket),
     ("src/link/admin_con.rs", "measure", Socket),
     ("src/link/admin_con.rs", "verify", Socket),
@@ -85,6 +86,9 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/admin_con.rs", "relay", Join), // a verb's answer, `unknown` at the bound
     ("src/link/admin_con.rs", "relay", Join), // the stop's grace
     ("src/link/admin_con.rs", "drain", Socket),
+    ("src/link/admin_service.rs", "open", Socket), // the service's socket, connected
+    ("src/link/admin_service.rs", "open", Socket), // the opening line, written
+    ("src/link/admin_service.rs", "open", Socket), // the opening's answer, read
     ("src/link/client.rs", "connect", Socket),
     ("src/link/client.rs", "ask_within", Socket), // a setup ask, dial to answer
     ("src/link/client.rs", "start", Socket),
@@ -134,7 +138,10 @@ const CALLS: &[(&str, &str, Why)] = &[
     ("src/link/pairing.rs", "serve", Socket),
     ("src/link/pairing.rs", "serve", Socket),
     ("src/link/register.rs", "authority_lock_by", Reads), // the pool's checkout for the authority lock
+    ("src/link/relay.rs", "dial", Socket), // the request within a second of the service's open
     ("src/link/relay.rs", "dial", Socket),
+    ("src/link/service_invoker.rs", "ask_verb", Socket), // the baseline's run answer
+    ("src/link/service_invoker.rs", "poll_once", Socket), // a `run` poll's answer, read
     ("src/listen.rs", "bounded", Socket),
     ("src/passkeys.rs", "from_config", NotTokio), // the ceremony's lifetime
     ("src/surfaces/alerts.rs", "choose", Join),   // the decision, 202 pending

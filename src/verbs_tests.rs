@@ -56,8 +56,8 @@ pub(crate) async fn operated_with(ceiling: &[&str], silence: Duration) -> Option
     let s = rig.store().clone();
     let (ada, ada_session) = admin(&rig.app, &s, &mut authenticator(), "ada").await;
     let (karl, handles) = rig.register(&ada_session, "box-a", "karl").await;
-    let (_, _, config) = rig.take(&handles[1], &ada_session).await;
-    let (_, _, gate_config) = rig.take(&handles[0], &ada_session).await;
+    let config = rig.take_config(&handles, 1, &ada_session).await;
+    let gate_config = rig.take_config(&handles, 0, &ada_session).await;
     let admin_con = admitted_admin(&config, ceiling).await;
     let (bea, bea_session) = signed_in(&rig.app, &s, &mut authenticator(), "bea").await;
     let granted = host::grant_add(&s, &bea, "operator", Some(&karl), None).await;

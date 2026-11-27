@@ -37,8 +37,8 @@ src/
                 each
   link/         the link of section 8, both halves: the listener and the
                 register verbs the server runs, and the client each
-                connector runs, admin-con's relay client and sudo invoker
-                among them. The link of this entry is a connection and
+                connector runs, admin-con's client of the weaver-admin
+                service among them. The link of this entry is a connection and
                 not the seam kind the clause below names
   adapters/     gate.rs, gate-con's client of the gate (section 7.1)
   bin/          weaver-web, the server, and gate-con and admin-con, the two
@@ -57,14 +57,14 @@ src/
 by the server**, which is how the server's never reaching an agent is a
 build fact rather than a sentence. The reaches live in `adapters/gate.rs`,
 gate-con's client of the gate socket per section 7.1, and in
-`link/relay.rs` and `link/sudo_invoker.rs`, admin-con's reader of the trace
-relay and its invoker of admin's verbs per section 7.2. The two connectors
-are named as binaries under `bin/` because the split between them is a
-split of posture and not of module: admin-con runs as a service user the
-box's sudo rule grants the agent's fixed command lines and the trace relay
-admits as its one reader, and gate-con as one the gate admits, and a module
-tree cannot say which process carries which. admin-con's sudo invoker is
-the one privileged invocation in this crate, per section 7.2. The ingest of
+`link/relay.rs` and `link/service_invoker.rs`, admin-con's reader of the
+trace relay and its client of the weaver-admin service for admin's verbs
+per section 7.2. The two connectors are named as binaries under `bin/`
+because the split between them is a split of posture and not of module:
+admin-con runs as a service user the weaver-admin service admits on its
+socket and the trace relay admits as its one reader, and gate-con as one
+the gate admits, and a module tree cannot say which process carries which.
+This crate holds no privileged invocation, per section 7.2. The ingest of
 section 3.1 and the staged experiments' queue of section 5 are unbuilt and
 hold no module. The authored writes of section 3.2 that are built are
 section 2.13's identity writes, which are `store/`'s, and section 2.12's
@@ -1494,8 +1494,8 @@ never a bare socket's. Each row carries:
   tuple has**, so it moves only with the tuple: a turn's start or close
   moves the load state and its source and leaves the tuple and its source
   as they were (migration `0012`)
-- **the ceiling admin-con declared**, the verbs the box's sudo rules grant
-  its user as its hello named them, with the date, per section 8. It is the box's word
+- **the ceiling admin-con declared**, the verbs the weaver-admin service's
+  `grants` answer names for it as its hello named them, with the date, per section 8. It is the box's word
   about itself and an upper bound, never a grant, and this copy is what
   surfaces read: the server authorizes against the live connection's own,
   per section 8
@@ -2052,7 +2052,8 @@ it decides are stated here and in section 2.8, and the reasons are there.
   insert's transaction has ended. The
   outcome names it when the answer lands: `ok` for admin's answer (exit 0),
   `failed` for admin's refusal (exit 1) or a fault whose kind proves the
-  verb never ran (`busy`, `not_started`, `outside_ceiling`, an allow-list),
+  verb never ran (`busy`, `not_started`, `outside_ceiling`, `not_granted`,
+  an allow-list),
   and none for any other exit status or none, any other fault, known or
   not, nor where the connection ends with the frame in flight: only the
   contract's evidence writes an outcome. **An answer's shape is checked
@@ -2591,16 +2592,18 @@ it decides are stated here and in section 2.8, and the reasons are there.
   logged at error, never as the ordinary refusal, which would read as one
   the audit holds: the refusal's half of the rule that an act whose first
   record cannot be written does not act. **Nothing about
-  the person crosses to the box**: the box records the uid sudo reports,
-  admin-con's own, per section 7.2, so these records are the one record of
-  who asked. **Audit records are written by this crate's
+  the person crosses to the box but as a claim**: admin-con sends the
+  weaver-admin service the principal for the service's record alone, never
+  as an authorization input, and the service grants on admin-con's account,
+  per section 7.2, so these records are this crate's one record of who
+  asked. **Audit records are written by this crate's
   own processes alone, the server or a host command, and never edited**: they are not authored rows and take no version,
   and they are not observations of an agent, so they sit outside both halves
   as the session does.
 - **The register verbs take their own path.** `authority`, `register`,
   `revoke` and `rotate` act on the server, its authority and its store, and
   nothing they do crosses to a box, so the three gates do not apply: there
-  is no box ceiling and no sudo rule for them, and registering an
+  is no box ceiling and no grant of the service's for them, and registering an
   agent could not pass gates that need a registered agent. **Today they are
   the operator's commands on the server's host**, written as the host
   principal above and audited as its writes are, authorized by access to
@@ -2630,17 +2633,27 @@ it decides are stated here and in section 2.8, and the reasons are there.
   row there under the row's lock and refuses one retired since step three
   read it, rather than making it live again, and the credentials are minted
   only once both re-checks pass. **The store keeps
-  fingerprints only, and the two client configs are handed over and kept
-  nowhere**: held in the server's memory alone, each under a 32-byte handle
+  fingerprints only, and the two client configs and the two connectors' key
+  files are handed over and kept nowhere**: held in the server's memory alone, each under a 32-byte handle
   from the operating system's random source, taken once, within five
   minutes, by the session that minted them, under `Cache-Control:
   no-store`, never in the store, a file, a log line or an audit record;
-  at most 64 wait or are reserved, a write reserving room for its two at
+  at most 64 wait or are reserved, a write reserving room for its four at
   step three atomically and releasing what it does not hold on every path,
   so the bound counts the writes in flight; and a restart drops any not
   taken, after which the admin rotates. The
-  page says each holds its connector's private key and goes to the box with
-  the install script, readable only by the connector's own user at 0600.
+  page says each key file holds its connector's private key, in a file of
+  its own (section 8), and that the four go to the box with the install,
+  each key root's and read through its connector's own group alone at 0640,
+  and that the install adds `key_file` to each config. `register` and
+  `rotate` from the host write the same four files, `gate-con.toml`,
+  `gate-con.key`, `admin-con.toml` and `admin-con.key`, staged and renamed
+  into place one by one, **each plane's key before its config**, so a
+  failure between two renames never leaves a config standing without the key
+  it names, nor on a rotation a new certificate beside the old key; a failure
+  names what stands published and what stands staged, and a later run
+  discards part of a staged pair, whether its run stopped between its
+  creates or partway through its publish.
   **The way forward**, as built on 2026-11-13: the hand-over page's last
   line is the next step.
   - Where the admin holds a live grant on the agent, it is a link to the
@@ -2844,19 +2857,37 @@ the connector's run, drawn at its start, and a sequence, and acknowledged by
 `entry_ack`. **Every entry is one line of the operations log**; **an alert is
 raised only for an entry that did not come through WeaverWeb**:
 
-- **admin-con reads the box's `admin.log`**, the box fact `admin_log` of
-  section 8, from its start (no history: the file as it stands when
-  admin-con starts, its baseline taken before the first look and, where it
-  falls inside a line admin was writing, skipping through that line's end;
-  a file absent
-  or unreadable then is read from its start once it opens; a size below what
-  was read, a replacement, or the digest of the last 4 KiB read no longer
-  matching, a copy-truncate regrown between two looks among them, is a
-  discontinuity read from its start, never resumed mid-line), each line, a
-  blank one too, passed along as admin
-  wrote it beside one field admin-con judges: **`own`, true where the line's
-  caller uid is admin-con's own**, the `uid` admin writes for an invocation
-  (the uid sudo reported) or the `peer_uid` the relay writes for a peer. A
+- **admin-con reads the box's `admin.log` through the weaver-admin
+  service**, on one `log` connection on the service's socket (section 7.2,
+  `weaver-admin-operator-contract` section 8.6 at WeaverAgent `265a332d`),
+  and reads no file. Each message is one entry: a line passed along as
+  admin wrote it, a line that is not one JSON object as text, `unparsed`, a
+  line past the service's bound as an `oversized` marker, and the service's
+  truncation or replacement of the file as a discontinuity. **Every gap is
+  marked**: any close of the connection is a discontinuity, and so is an
+  opening admitted after a refusal or a failed opening, since lines
+  appended meanwhile were not read. A reopening backs off on steps from 1
+  to 30 seconds, waiting between half of each step and the whole, and only
+  a connection that proved itself, one that carried a message or stood for
+  30 seconds, starts the steps again, so a service that admits and closes
+  at once is reopened on the growing wait. `log_behind`, the service's word
+  that admin-con fell behind, is reopened at once, unless no line was read
+  since the last `log_behind`, when it waits on the backoff. **A malformed
+  message closes the connection and is marked**: a line that does not
+  parse or passes the bound raises `service_malformed`, and any other
+  refusal on the standing connection (`ask_malformed` among them) raises
+  `service_<word>`, each with a discontinuity and a reopening on the
+  backoff. A refusal of the opening by `log_unread`, or by a word that says
+  admin-con or its config is at fault, raises one failure entry per change
+  of word and not one at every retry, an admission clearing it; `full` and
+  `opening_late` raise none. **Every refusal of the opening is retried on
+  the backoff**, the three defect words `version_unknown`,
+  `purpose_unknown` and `name_refused` among them, so a service upgraded or
+  a name mended while admin-con runs is taken at the next opening, at the
+  cost of one opening every 30 seconds. Beside each line stands one field **the
+  service judges and admin-con carries: `own`, the message's
+  `through_service`**, true where the line names the service's account as
+  its caller or peer, an act that came through WeaverWeb. A
   line that is not own is an act on the box by another party, the operator
   using admin directly, and its refusal is classified by the doors' own
   allow-lists: **an `unload` stopped at its save point on a leg at rest
@@ -2872,7 +2903,12 @@ raised only for an entry that did not come through WeaverWeb**:
   has no need of, which the operations log keeps whole;
 - **a connector's own failure** raises `failed` from its source, its subject
   the failure's kind: admin-con's `ceiling_not_read`, `trace_relay_refused`,
-  `admin_log_unreadable`, and either connector's `link_outage` (the outage's
+  `service_<word>` for a word of the service that says admin-con or its
+  config is at fault, or for `log_unread`, and `service_word_unknown` for a
+  word outside a kind's shape (lowercase letters and underscores, 64 bytes
+  with its prefix), the word quoted in the message and cut at 48 bytes,
+  since the door refuses a kind outside that shape and closes the link, and
+  either connector's `link_outage` (the outage's
   length, once the link is back) and `entries_dropped`.
 
 **At least once, taken once, bounded.** An entry stays in the connector's
@@ -2918,7 +2954,8 @@ moves, so a steady stream of entries never postpones it.
 **Every shape a connector sends is one the door takes for its source**, its
 fallbacks included: an `admin_log` entry past the bound is `admin_log`'s own
 `oversized` marker, and a connector's own entry past it the failure shape. **Nothing on a
-connector waits on an entry**: `admin.log` is read on a thread of its own,
+connector waits on an entry**: `admin.log` is read by a task of its own
+over the service's `log` connection,
 an entry is queued without waiting, and the connection's pump sends at most
 sixteen unacknowledged at once on the write path every frame takes. **The
 door checks an entry once**: its run and sequence, its source on the
@@ -4099,9 +4136,9 @@ turn to the gate and reads the measurement that comes back. Agents drives
 the lifecycle verbs and reads the observation exchange. Section 7 names
 each of those reaches. The gate is section 7.1 and the charter carries no seam
 record for it, and `validate`, the lifecycle verbs and the observation
-exchange are section 7.2's, reaching admin through admin-con's sudo
-invoker on the agent's box as fixed command lines, never as a process the
-server runs, and carrying no record either. Section 7's third is the analysis
+exchange are section 7.2's, reaching admin through admin-con, which asks
+the weaver-admin service on the agent's box to run its fixed command lines,
+never as a process the server runs, and carrying no record either. Section 7's third is the analysis
 stream, which no surface reaches and section 3.1's ingest does, and the
 charter records no seam for it either: the reach is into this crate rather
 than one of its own, so the record is the emitter's and sits in
@@ -4861,8 +4898,8 @@ script lays the agent's folder of per-agent files**, laid once the name is known
 the operator's words of the same day. It holds the loop's directory and gate-con's list
 of allowed destinations; root owns both, and the agent's group reads them. That list is
 the Planner's reading of the operator's words "gatecon's config" (2026-11-26), put to
-the operator and his to change. gate-con's credential config, which carries its key,
-is not in that folder's sentence: it stays gate-con's own, as section 8 states. The
+the operator and his to change. gate-con's config and its key file are not in that
+folder's sentence: they are laid by section 8's trust rule, root's and gate-con's group's. The
 folder's location is the appliance's, and no document here names it. What the box lays from the tuple once
 Confirm stands is the rest of the agent (below). On the state drive each agent has a directory of its own under the state mount,
 named for it, which holds the agent's folder and its home side by side.
@@ -5400,65 +5437,181 @@ also reads the agent's `admin.log`**, admin's NDJSON record of the
 boundary's activity (`weaver-admin-Spec` section 8: refused and read-only
 verbs, `show`, a `stop` at rest, the relay's connects and refusals, each
 line naming its caller's uid and its outcome as the answer or refusal
-object), from the absolute path its config names as the box fact
-`admin_log`, no default; each line it reads is an entry of section 2.14.
+object), through the weaver-admin service's `log` connection, as the
+paragraph on the log below states; each line it reads is an entry of
+section 2.14.
 
 **admin-con holds its connection with no agent laid**, on the Planner's word of
 2026-11-25 accepting the plan, since an appliance pairs before any agent stands on
-it and its loop is installed over admin-con (section 8.2). **Its three box facts,
-`trace_socket`, `weaver_admin` and `admin_log`, stand together**, on the Planner's
-word of the same day: none is an appliance with no agent laid, all three a laid
-agent, each an absolute path as before, and some and not all a half-done install,
-refused at load naming what is missing. One fact, the agent laid or not
+it and its loop is installed over admin-con (section 8.2). **Its one box
+fact is `admin_socket`**, the service's socket, an absolute path: absent,
+no agent is laid; present, an agent is. A config naming a member an older
+admin-con read, `weaver_admin`, `trace_socket` or `admin_log`, is refused
+at load naming it, so a config laid before the service's socket never
+starts silently unlaid. One fact, the agent laid or not
 (`AdminConConfig::laid`), chooses the invoker and the start line. **With no agent
-laid** the door reads closed for that reason and admin-con dials no relay, the
-ceiling is empty and admin-con runs no `sudo`, so the server asks no verb, and no
+laid** the door reads closed for that reason and admin-con opens no trace, the
+ceiling is empty and admin-con asks the service nothing, so the server asks no verb, and no
 `admin.log` is read and no entry raised, so an appliance with no agent shows no
-alert for files that do not yet exist. A config the
-pairing's `adopt` completes holds none of the three; the act that lays the agent
-adds them and restarts the service, whose next hello declares the ceiling the
-box's rule then grants. The staging tool of section 8.1 still requires the four
-box facts for an agent it stages, since it stages an agent's connectors.
+alert for a log that does not yet exist. A config the
+pairing's `adopt` completes holds no `admin_socket`; the act that lays the agent
+adds it and restarts the service, whose next hello declares the ceiling the
+service's `grants` answer then names. The staging tool of section 8.1 still requires the two
+box facts for an agent it stages, `gate_socket` and `admin_socket`, since it
+stages an agent's connectors.
 
-**Access to the verbs is the box's sudo rule, and this crate holds exactly
-one privileged invocation: admin-con's sudo invoker**, on the operator's
-ruling of 2026-10-03, which revised the rule of 2026-10-02 that no sudo
-stands anywhere here (`toddwbucy/WeaverWeb#14`). The box installs one strict
-rule per agent: it names admin-con's own service user and grants it exactly
-the fixed `weaver-admin <verb> <agent>` command lines for that one agent,
-with no argument the caller chooses, nothing read on standard input, and no
-login session opened for them, per `weaver-admin-operator-contract` sections
-1 and 2. An observer's rule grants `show`, and an operator's adds
-`validate`, `load`, `unload`, `stop`, `save-point`, `restore` and
-`force-unload`. **The agent's page offers each lifecycle verb that both the
-person's grants on the agent and the connection's ceiling carry**,
-`save-point`, `restore` and `force-unload` among them; the prompt of section
-2.14 asks `save-point` then `unload`, or `force-unload`, as the person's own
-asks; and every ask is authorized per section 2.13 before it is sent.
-**The operator's reason for the old
-rule still holds**, that a root process parsing arguments which arrived over
-a network is where a CVE comes from, because nothing that crossed the link
-reaches the command. The server sends admin-con an abstract verb and never a
-command. admin-con maps it locally to the granted line, builds the command
-from constants and the agent's configured name alone, runs sudo
-non-interactively, and closes the invocation's standard input. The invoker
-is one module, `src/link/sudo_invoker.rs`, and `tests/no_privilege.rs`
-pins that nothing else in the repository invokes privilege, per section 9.
-**The person never crosses to the
-box**: the cause the agent records is the uid sudo reports, admin-con's own,
-per `weaver-types-Spec` section 3.1, and which person asked is section
-2.13's audit record alone. The child runs in a session of its own, so
-admin-con's own signals never reach it. The seed's `lifecycle.rs`,
-which ran the verbs through an unscoped sudo, left the tree with the act
-that built admin-con.
+**admin-con asks the weaver-admin service for the grants and the verbs,
+and this crate holds no privileged invocation**, on the operator's rulings
+of 2026-11-26, which revised the ruling of 2026-10-03 that admin-con's sudo
+invoker be the one (`toddwbucy/WeaverWeb#14`), per
+`weaver-admin-operator-contract` section 8 at WeaverAgent `265a332d`. The
+service stands on the agent's box, admits admin-con's service user on its
+local socket, reads the grant itself at every verb, and runs the fixed
+lines; admin-con builds no command and runs no program. An observer's grant
+names `show`, and an operator's adds `validate`, `load`, `unload`, `stop`,
+`save-point`, `restore` and `force-unload`. **The agent's page offers each
+lifecycle verb that both the person's grants on the agent and the
+connection's ceiling carry**, `save-point`, `restore` and `force-unload`
+among them; the prompt of section 2.14 asks `save-point` then `unload`, or
+`force-unload`, as the person's own asks; and every ask is authorized per
+section 2.13 before it is sent. **The operator's reason holds**, that a root
+process parsing arguments which arrived over a network is where a CVE comes
+from: the server sends admin-con an abstract verb and a principal, and
+admin-con sends the service the verb among the eight and the principal for
+its record, which the service runs as fixed lines alone. The invoker is one
+module, `src/link/service_invoker.rs`, over the socket's client of the
+paragraph below, and `tests/no_privilege.rs` pins that nothing in the
+repository invokes privilege, per section 9.
 
-**The ceiling comes from the box's sudo rules, and a verb is asked whenever
-the ceiling grants it.** admin-con asks sudo, for each verb it knows,
-whether that exact line is granted without running it (`sudo -n -l` on the
-line), and declares exactly the granted set in its hello, per section 8 and
-`toddwbucy/WeaverWeb#14`. The listing needs no password only while every
-sudo entry admin-con's user holds is `NOPASSWD`, which the rule's narrowness
-already requires. **The trace door's state never gates a verb.** The relay
+**One control connection per ask, and every word placed.** The hello's
+`grants`, each verb, and each `run` poll after a drop open their own
+control connection, so at most three stand at once, under the service's
+eight. A verb holds its connection until its final line: `ran` is the
+outcome (its exit code, its object, its standard error; a `stderr_cut` is
+logged and not carried) and `fault` is admin-con's `fault`. **Every refusal
+before a start is `not_started`**, the message naming the service's word,
+since nothing ran: the opening's words, `ask_unknown`, `ask_malformed`,
+`verb_unknown`, `grant_unread` and `not_started` itself. A word that says
+admin-con or its config is at fault (`opening_malformed`,
+`version_unknown`, `purpose_unknown`, `name_refused`, `ask_unknown`,
+`ask_malformed`, `verb_unknown`) adds a connector failure entry of section
+2.14, its kind `service_<word>`; `opening_late`, `full`, `grant_unread` and
+`not_started` add none. Two words keep kinds of their own: **`busy`**, the
+message naming the service's run, and **`not_granted`**, the service's read
+of the grant at the verb, a fault kind of section 8 that the audit writes
+`failed`, never run. At the hello, every refusal of the grants, the
+opening's or `grants_unread`, declares the empty ceiling with the
+`ceiling_not_read` entry naming the word, within the hello's 10-second
+bound over the opening and the ask together.
+
+**The connector after a drop.** admin-con asks one verb at a time, and
+**before every verb but `show` its own connection first asks `run`**: that
+answer's `ended` and `standing` are the baseline, what the service held
+before the ask, so nothing admin-con remembers between asks (a `show`, its
+own restart, an earlier exit of the table below) can make the reading
+stale. A failure of the baseline is `not_started`, the verb never asked.
+Where a verb's connection closes before its final line (or the service
+refuses it `ask_outstanding`, refuses it after `started`, refuses it with a
+word no verb's refusal holds, or sends a line no verb's), the invocation
+keeps admin-con's slot and asks the service `run` every 2 seconds on a
+fresh connection, reading its own run by the id `started` named or, with
+none held, as a run of its verb that the baseline did not hold:
+
+| The `run` answer | admin-con |
+|---|---|
+| same `instance`, its run standing, `started_ms` null or not | polls on; at the verb's bound admin-con answers `unknown`, and the slot is held until the run ends |
+| same `instance`, `ended` its run | answers that `ran` or `fault`, and frees the slot |
+| same `instance`, nothing of its own | answers `not_started`, and frees the slot |
+| another `instance` | answers `unknown`, and frees the slot; the next `show` settles it |
+| no socket answering for the verb's bound | answers `unknown`, and frees the slot |
+| a poll refused `full` or `opening_late` | waits for the next poll |
+| a poll refused with any other word | answers `unknown`, with an entry, and frees the slot |
+
+**The first row holds the slot only while admin-con can read the run.**
+Where the service stops answering, or refuses the polls for good, the run
+may still stand, and the slot is freed: holding it on a service admin-con
+cannot reach would hold every verb with no end, and the service's own
+machine guards the run, refusing the next verb `busy` while it stands.
+**A `show` is never listed as standing nor kept as ended** (section 8.4),
+so a dropped `show` is `unknown` at once, never polled and never
+`not_started`.
+
+An orderly stop waits, within its grace, for the slot that such an
+invocation holds, and invokes nothing. **The person never crosses to the
+box** but as the principal the service records: which person asked is
+section 2.13's audit record, and the service's own. The seed's
+`lifecycle.rs`, which ran the verbs through an unscoped sudo, left the tree
+with the act that built admin-con, and the sudo invoker that followed it
+left with child 3 of `act/the-connectors-side-of-the-socket`.
+
+```graph
+node: web-a-verb-asks-the-service-and-reads-its-run-after-a-drop
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-a-verb-asks-the-service-and-reads-its-run-after-a-drop
+```
+
+**The service's socket has its client, ahead of admin-con's move onto it**
+(`act/the-connectors-side-of-the-socket`, child 2, 2026-11-27), per
+`weaver-admin-operator-contract` section 8 at WeaverAgent `265a332d`. On the
+operator's rulings of 2026-11-26 the sudo rule moves to the weaver-admin
+service's account, and admin-con asks that service for the grants, a verb,
+the trace and the admin log's lines on the box's local socket. The grants
+and the verbs moved onto it in the stack's third child, the trace in its
+fourth and the log in its fifth, as the paragraphs above and below and
+section 2.14 state.
+The client is `src/link/admin_service.rs`. Each connection opens with one
+line naming the contract's version 1, its purpose and the configured agent,
+and the service answers `open` with its `instance`, or one `refused` line
+naming one of the contract's eighteen words. **Every line is read within its
+bound and never past it**: the opening's answer at 4096 bytes with its
+newline, within 11 seconds (the service's 10 and one more); a control line
+at 256 KiB, the contract's own bound; a log line at 64 KiB, this crate's
+bound over the contract's 8 KiB line escaped. A line past its bound, one cut
+before its newline, or one that does not parse is the service's malformed
+answer, never read further, and the connector's own lines are checked
+against their 4096 bytes before a byte is sent. The client's tests run
+against a fake service written from the contract's section 8.10
+(`src/link/fake_service.rs`), which reaches no agent and no privileged
+program, per section 9.
+
+```graph
+node: web-the-service-socket-bounds-every-line
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-the-service-socket-bounds-every-line
+```
+
+**The admin log comes through the service** (child 5 of
+`act/the-connectors-side-of-the-socket`, 2026-11-27): admin-con's reader,
+`src/link/admin_log.rs`, is a task of its own on the runtime that holds the
+service's `log` connection, never a thread polling a file, so a slow or
+silent service holds neither the trace nor the verbs. What each message
+becomes, how every gap is marked and where each refusal word lands is
+section 2.14's account of the connectors' entries.
+
+```graph
+node: web-the-admin-log-comes-through-the-service
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-the-admin-log-comes-through-the-service
+```
+
+**The ceiling is what the service's grants answer names, and a verb is
+asked whenever the ceiling grants it.** admin-con asks the service
+`grants` at each hello and declares exactly the verbs it names, among the
+eight, per section 8; a verb the answer names outside the eight is logged
+and left out. The service reads the grant again at every verb, so a rule
+changed since the hello answers `not_granted`. **The trace door's state never gates a verb.** The relay
 of the paragraphs below runs only while the agent runs, so a closed door
 while the agent is unloaded is the normal state, and `load` must be askable
 while the door is closed. The door's state is shown on the row, per section 2.12. The
@@ -5468,23 +5621,23 @@ receipt with their source, and nothing the agent writes to the trace while
 it is closed ever writes the row, per the rule for a door's opening below.
 
 ```graph
-node: web-ceiling-is-what-the-sudo-rules-grant
+node: web-ceiling-is-what-the-services-grants-name
 kind: assertion
 tag: perturbation
 
 edge: asserts
 from: weaver-web
-to: web-ceiling-is-what-the-sudo-rules-grant
+to: web-ceiling-is-what-the-services-grants-name
 ```
 
 ```graph
-node: web-no-privilege-outside-the-sudo-invoker
+node: web-no-privilege-in-the-repository
 kind: assertion
 tag: perturbation
 
 edge: asserts
 from: weaver-web
-to: web-no-privilege-outside-the-sudo-invoker
+to: web-no-privilege-in-the-repository
 ```
 
 `show` answers the agent's load facts, the observation exchange of
@@ -5525,6 +5678,31 @@ declared reader is the whole of the box's fan-out: more readers are this
 crate's to serve, from the server, never the box's. The stream is one-way
 and nothing behind the sink reaches back; what admin-con decides from
 reading it comes back by running a verb, per the contract's section 6.
+**admin-con reaches the relay through the weaver-admin service** (the
+stack's fourth child, 2026-11-27), per `weaver-admin-operator-contract`
+section 8.5 at WeaverAgent `265a332d`: it opens a `trace` connection on the
+service's socket naming its agent, and after the service's `open` the
+connection is the relay's wire, which the paragraphs below describe
+unchanged. admin-con sends its whole request within one second of reading
+`open`. **Every refusal of the opening is a closed door, never a refusal of
+the position**: `relay_unreachable`, `full` and `opening_late` alike, the
+door retried on the backoff; a word that says admin-con or its config is at
+fault (`opening_malformed`, `version_unknown`, `purpose_unknown`,
+`name_refused`) adds a connector failure entry, its kind `service_<word>`,
+once per change of word and not at every retry. **A close before the
+header has three causes**: the relay's refusal of the position, a relay
+that died after the service dialed it, or a request that reached the relay
+after its window. admin-con confirms it once, opening again at the same
+position where at least two seconds of the opening's deadline remain (the
+second opening stopping one second short of it), and always on the
+stream's redial, which has no deadline: a relay whose window passed admits
+the second opening, and the stream goes on unmarked; a relay that died is
+refused `relay_unreachable`, a closed door; and a second close is read as
+the refusal, which is not proof. **A second opening with no header by its
+cut-off is a closed door**, as a first opening past its deadline is, with
+no mark and the position kept: a timeout is not a close, and it comes just
+when a late request is the likely cause. With less of the deadline left,
+the first close is the refusal, as before.
 **The load event in that stream, and its `wall_ms`, are the harness's**,
 written on the harness's clock, which is not monotonic, and carried by the
 sink admin opens, per `toddwbucy/WeaverAgent#59`. It carries the
@@ -5950,16 +6128,16 @@ and 3. **admin-con's verb bound is a member of its config that the install
 sets above the box's load bound**, `verb_bound_secs`, 960 unless set, not a
 constant of this crate. **A verb runs to completion**, per the operator's rulings
 of 2026-10-03 on `toddwbucy/WeaverWeb#14`: an invocation finishes even when
-its caller disappears, so at its bound admin-con leaves the process running,
-answers `unknown`, and the next `show` reads the real state. **The
-invocation slot stays occupied until that process exits and is reaped**,
-even after its caller was answered `unknown`: verbs that arrive meanwhile
+its caller disappears, so at its bound admin-con leaves the run to the
+service, answers `unknown`, and the next `show` reads the real state. **The
+invocation slot stays occupied while admin-con can read that run standing**,
+by the drop table above, even after its caller was answered `unknown`: verbs that arrive meanwhile
 queue behind it under the existing bound and `busy`, and admin-con's
 orderly stop waits for it too, per section 8. Answering at the bound and freeing
 the slot would end the one-verb-at-a-time span while the verb still ran, so
 the next verb could run beside it. **The slot is admin-con's own, one per
 process, and is held across connection attempts**: a link that drops while
-a timed-out verb's process still runs leaves the slot occupied, so a verb
+a timed-out verb's run still stands leaves the slot occupied, so a verb
 asked on the fresh connection, admitted at once with a closed door, queues
 behind it under the same bound and `busy` and never runs beside it. **The
 bound counts ordinary asks only**: a `show` the server asked is never
@@ -6087,19 +6265,65 @@ two connectors.
 
 **Each connector runs as a dedicated service user**, one per agent and plane
 and never the operator's own uid, per the operator's rulings of 2026-10-02
-and 2026-10-03, and holds only what its plane needs. **admin-con's user
-holds the agent's access group and the lines the box's sudo rule grants it,
-and nothing of the agent's own**: WeaverAgent's `create-agent.sh` creates
-that user, the rule and the trace-reader declaration, per
-`toddwbucy/WeaverAgent#79`. **gate-con's user holds what the box admits it
+and 2026-10-03, and holds only what its plane needs. **admin-con's user is the one the
+weaver-admin service admits on its local socket for the agent, and holds
+nothing of the agent's own**: the user and the grant the service reads for
+it are WeaverAgent's, per `weaver-admin-operator-contract` section 8. **gate-con's user holds what the box admits it
 by for the gate, and nothing else**, as `toddwbucy/WeaverAgent#70` rules: an
 entry in the declaration's allow list alone does not reach the gate's
 socket. This document names no group, socket path, mode or uid for either.
-**One privileged invocation stands in this crate, admin-con's sudo
-invoker**, per section 7.2; no other sudo, no root wrapper and no setuid
-binary stands anywhere in it, per section 9's row. Placing each connector's
-config at 0600 under its own user is the install's, and carries no box path
-into the repository.
+**No privileged invocation stands in this crate**, per section 7.2: no
+privilege-escalating program, no root wrapper and no setuid binary stands
+anywhere in it, per section 9's row.
+
+**Each connector reads its config and its key from two files, under one
+trust rule** (child 6 of `act/the-connectors-side-of-the-socket`, the brief
+of 2026-11-27): the config names `key_file`, an absolute path, a box fact
+the install writes, and the key file holds the key's PKCS #8 PEM alone, one
+ECDSA P-256 block. The connector opens the key only once the config has
+passed, and checks the config's certificate over the key at every load, as
+`adopt`'s `key_mismatch` does. Each file is opened by descriptor under its
+folder's descriptor, without following a symbolic link and without blocking,
+and both descriptors are judged, the file's first, before a byte is read:
+
+| | Config | Key file | The folder holding each |
+| --- | --- | --- | --- |
+| Owner | root | root | root |
+| Group | the connector's own effective group | the same | the connector's own group, or root's |
+| Mode | no bit outside 0640 | no bit outside 0640 | no write for group or others, nothing for others |
+| Access list | named entries grant read alone | none beyond the three base entries | not read |
+| Kind | a regular file | a regular file | a directory |
+| Bound | 1 MiB | 64 KiB | none |
+
+**Each refusal names what it found**: the file's or the folder's owner,
+group or mode, and for a file whose group is not the connector's, the
+effective group the connector runs with and the group to run it with.
+
+**The access list is read as well as the mode**, from the file's descriptor,
+since on a file that carries one the mode's group bits show the mask and not
+the owning group's rights. A key carrying any entry beyond its owner, owning
+group and others is refused, since an entry is exactly how the service's
+account would read it; a config is refused where a named entry, the owning
+group's entry or the mask grants write or execute, the service's account
+reading it through an entry of its own where the agent's folder of settings
+lays one. A filesystem that keeps no access lists has none to carry; any
+other failure to read the list refuses the file. A config carrying its key
+inline, `key`, is an old one and refused with one sentence naming the member,
+so a connector never starts keyless. The test build takes its own uid as the
+owner, since a test makes no file of root's, and a test of root's rule names
+owner 0 itself. Laying the files is the install's, and carries no box path
+into the repository; the shape of each is the brief's list for the other
+repository.
+
+```graph
+node: web-a-connectors-key-is-a-file-of-its-own
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-a-connectors-key-is-a-file-of-its-own
+```
 
 **Nothing in the read or write path is box-bound to the agents.** The reader
 is a store client, the runner is a queue consumer, and the front end with
@@ -6159,7 +6383,7 @@ verbs, the trace and the setup's asks on admin-con and the admin plane, as built
   whatever the machine's routes. Where it is absent the connector dials by the routes, as
   built. **It is a box fact appended after each adopt, by whoever appends it**: `adopt`
   writes the config back to its key and writes its tail again from the answer (section
-  8.2), so a member appended after one adopt is gone after the next, as `trace_socket`
+  8.2), so a member appended after one adopt is gone after the next, as `admin_socket`
   is. The appliance's setup script appends admin-con's from the management card after
   every adopt, and gate-con's from the data card at the loop's install.
 
@@ -6275,12 +6499,11 @@ register verbs, which act on the server and reach no box, take section
 access**: a person authenticated to the server, holding a grant on the agent
 whose role permits the verb, or the server itself asking an observation verb
 for its own purposes, per section 2.13, checked on the server before any ask
-leaves it. **Second, the ceiling**: the verbs the box's sudo rules grant
-admin-con's user, which admin-con derives by asking sudo, for each exact
-line, whether it is granted (`sudo -n -l`), declares in its hello, and the
-server never exceeds. **Third, the box's sudo rule itself**: a line the rule
-does not grant never reaches weaver-admin, sudo refusing it, per
-`weaver-admin-operator-contract` section 5. **A turn on the data plane
+leaves it. **Second, the ceiling**: the verbs the weaver-admin service's
+`grants` answer names for admin-con, which admin-con declares in its hello
+and the server never exceeds. **Third, the service's own read of the grant
+at the verb**: a verb not granted never runs, the service answering
+`not_granted`, per `weaver-admin-operator-contract` section 8.4. **A turn on the data plane
 passes the first gate and then the gate's own admission**: the person's
 grants on the agent must permit `turn`, and on the box gate-con's user is
 admitted as `toddwbucy/WeaverAgent#70` rules, which is the box's gate for
@@ -6292,14 +6515,14 @@ plane by the rules above: the server knows which agent and plane each
 connection is, and each connector knows it is talking to its own server.
 
 **The ceiling is declared in admin-con's hello.** admin-con's hello names
-exactly the verbs the box's sudo rules grant its user, each found by asking
-sudo whether that exact line is granted without running it, per section
-7.2. admin-con keeps no list beyond the verbs it knows, so the rules are the
-single source, and **there is no `grants` ask and none will be added**, per
-`toddwbucy/WeaverWeb#14`. **An agent whose rule grants nothing declares an
+exactly the verbs the weaver-admin service's `grants` answer names for it,
+among the eight verbs it knows, per section 7.2. admin-con keeps no list
+beyond the verbs it knows, so the service's grant is the single source, and
+**the server has no `grants` ask of admin-con and none will be added**, per
+`toddwbucy/WeaverWeb#14`. **An agent whose grant names nothing declares an
 empty ceiling**: the server asks nothing, and admission completes at
 `caught_up` per section 7.2. The empty ceiling is the honest declaration and
-not a placeholder: it is what the rules grant today. **The server holds it with that live
+not a placeholder: it is what the grant names today. **The server holds it with that live
 connection, fixed for the connection's life, and checks every ask against
 the ceiling of the connection the frame will be enqueued on**, so a
 reconnecting admin-con that narrows its ceiling cannot race an ask. It also
@@ -6318,8 +6541,8 @@ connectors trust their server by design, so a compromised server reaches
 whatever a connector can do, and the ceiling, which the box sets and the
 server only reads, bounds that to the verbs the box chose. The declaration
 is the box's statement about itself and not its authorization, which stays
-the sudo rule's: a ceiling that over-declares is still refused at the third
-gate.
+the service's read of the grant at the verb: a ceiling that over-declares is
+still refused at the third gate, `not_granted`.
 
 **A connector states its capabilities in its hello**, as `capabilities`,
 a list of names, on the admin plane alone so far. **A capability name says
@@ -6367,9 +6590,9 @@ to: web-server-never-asks-a-verb-outside-the-ceiling
 
 **Each verb ask names its principal, as a claim**: the requesting person, or
 the server for its own asks, per section 2.13. **The frame keeps the member,
-and admin-con passes nothing of it to admin**: it serves admin-con's own log
-and the row, and the box records the uid sudo reports, admin-con's own, per
-section 7.2. `toddwbucy/WeaverAgent#51`, which would have carried it to
+and admin-con passes it to the weaver-admin service for the service's record
+and nothing of it to admin**: it serves admin-con's own log, the row and the
+service's record, per section 7.2. `toddwbucy/WeaverAgent#51`, which would have carried it to
 admin, is closed as superseded. **It is never an authorization input
 anywhere on the box**, and section 2.13's audit is the one record of who
 asked.
@@ -6430,9 +6653,9 @@ every connection at admission is backed off. **`not_live` and
 certificate the pinned authority did not sign means the server's authority
 was rotated; all three are retried only at the cap and never faster**, each
 logged with what the operator must do, which is to re-install the agent's
-config from a registration or a rotation. **The connector re-reads its
-config before each retry at the cap**, under the same trust rule as at
-start, so a config re-installed at its path is dialed with at the next
+config and key from a registration or a rotation. **The connector re-reads its
+config and its key file before each retry at the cap**, under the same trust rule as at
+start, so a config and key re-installed at their paths are dialed with at the next
 attempt and no restart is needed; without the re-read the guidance could
 never take effect. **Only the link's members change at a re-install**: a
 re-read config naming another agent or plane than the one the connector
@@ -6479,11 +6702,10 @@ throughout. **admin-con is a conduit, and its stop asks nothing of the
 agent**, on the operator's ruling of 2026-10-14 (section 2.14, ruling 3),
 which retired the orderly stop's `unload` and its retry until rest of
 2026-10-08: admin-con answers its waiting asks `not_started`, waits for the
-verb in flight, until its process exits and is reaped, within the stop's
-grace, never killing it, and exits, invoking nothing. It parses no
-refusal class of admin's. A verb whose process outlasts the grace runs on
-unkilled as far as admin-con is concerned; what the unit's own end does to
-it is section 8.1's. **The stop's grace is a member of admin-con's config**,
+verb in flight, until its run ends at the service, within the stop's
+grace, and exits, invoking nothing. It parses no
+refusal class of admin's. A verb whose run outlasts the grace runs on at
+the service, which admin-con never stops. **The stop's grace is a member of admin-con's config**,
 `stop_grace_secs`, 1080 unless set: the box's load bound, the unload bound
 and a margin, timed from the stop's signal, so a stop that meets a `load`
 in flight waits for it, and the unit's stop timeout stands above the grace
@@ -6717,8 +6939,8 @@ location, account, group or socket is written into the repository**: each is
 a named parameter with no default, read from a file the operator keeps
 outside it. **No privileged program stands in it**: the staging tool runs as
 the operator's own user, refuses to run as root, and writes a directory the
-operator applies; the one privileged invocation stays admin-con's sudo
-invoker, per section 7.2 and section 9's row. **No account, group or sudo
+operator applies; no privileged invocation stands in the repository, per
+section 7.2 and section 9's row. **No account, group or sudo
 rule is created**: those are WeaverAgent's (`create-agent.sh`), so the
 install requires them and refuses by name where one is missing at apply.
 Whether the repository's own locations may become overridable defaults, and
@@ -6745,9 +6967,12 @@ half-rendered.
   the operator's rulings of 2026-10-02 and 2026-10-03 for the connectors;
   the server takes the same rule as a system unit under its own account
   (this document's election of 2026-11-11), so the console survives a restart
-  of the machine with nobody signed in. No `Group=` is set: each runs with
-  its account's own groups, which the box gives it, and section 8's service
-  users hold exactly what their planes need through them.
+  of the machine with nobody signed in. **A connector's unit sets `Group=`,
+  its plane's group parameter**, the group its config and key file are read
+  through under section 8's trust rule, which checks the file's group
+  against the connector's own effective group (the brief of 2026-11-27,
+  child 6); its account's other groups stay its own, which the box gives
+  it. The server's unit sets no `Group=`.
 - **`UMask=0077`**: every file a program creates is its own alone, the
   server's authority and operations log among them.
 - **`Wants=` and `After=network-online.target`**: the server listens on
@@ -6763,8 +6988,10 @@ half-rendered.
   the brief measured.
 - **`ExecStart=`** the program under the binaries location with `--config`
   naming its config: the server's at `<config root>/config.toml` with
-  `serve`, a connector's at `<config root>/connectors/<agent>/gate-con.toml`
-  or `admin-con.toml`.
+  `serve`, a connector's at `<config root>/connectors/<agent>/gate/gate-con.toml`
+  or `<config root>/connectors/<agent>/admin/admin-con.toml`, each plane in a
+  folder of its own, since the trust rule's folder is of the connector's
+  group and one folder carries one group.
 
 **What admin-con's unit adds, and why:**
 
@@ -6788,10 +7015,13 @@ half-rendered.
   value it stages into that agent's config (1080 unless the parameter
   file sets it, so 1140), and the template carries 1140 for an instance
   started without one.
-- **`Environment=PATH=`, admin-con's path parameter**, since the invoker
-  finds sudo by `PATH` and a path to it is a box path this repository does
-  not carry (section 7.2), so the unit's environment is part of what the
-  invocation trusts.
+- **`Environment=PATH=`, admin-con's path parameter.** It was set while
+  admin-con invoked sudo, for the reason then that "the invoker finds sudo by
+  `PATH` and a path to it is a box path this repository does not carry
+  (section 7.2), so the unit's environment is part of what the invocation
+  trusts". admin-con now runs nothing (section 7.2), and the unit is
+  unchanged since the weaver-admin service replaced the invoker: whether it
+  keeps the parameter is section 10's election.
 - **No `Delegate=`.** `toddwbucy/WeaverWeb#46` asked for it on
   2026-10-14, when admin made the agent's control group beneath the
   invoker's, which then had to be delegated. Since `toddwbucy/WeaverAgent#166`
@@ -6799,13 +7029,18 @@ half-rendered.
   root's that the service manager makes, and the invoker's containment is no
   longer judged (`weaver-admin-Spec` section 6.1), so admin-con's unit needs
   no delegation and asks for none.
-- **Nothing the contract forbids.** `weaver-admin-operator-contract`
-  section 2 requires the invoker's execution context to leave admin and the
-  agent what they need (the operator's ruling of 2026-11-09 on
-  `toddwbucy/WeaverAgent#166`), and calls providing it the invoker's
-  install's. So admin-con's unit sets none of these, and a test reads the
-  rendered unit for each:
-  - **no new privileges, under which sudo cannot gain root**:
+- **Nothing the contract forbids.** These were left out while admin-con
+  invoked sudo, because `weaver-admin-operator-contract` section 2 requires
+  the invoker's execution context to leave admin and the agent what they
+  need (the operator's ruling of 2026-11-09 on `toddwbucy/WeaverAgent#166`),
+  and calls providing it the invoker's install's. admin-con now runs nothing
+  (section 7.2), and the unit is unchanged since the weaver-admin service
+  replaced the invoker: it still sets none of these, and a test reads the
+  rendered unit for each. Whether it keeps setting none waits on the
+  contract's section 2 (section 10). Each item's reason below is the one
+  given while the invoker stood:
+  - **no new privileges**, left out because "under which sudo cannot gain
+    root":
     `NoNewPrivileges`, and every directive the service manager documents as
     implying it for a unit that runs as an account other than root:
     `SystemCallFilter`, `SystemCallArchitectures`, `RestrictAddressFamilies`,
@@ -6823,9 +7058,12 @@ half-rendered.
     `ProtectSystem`, `ProtectHome`, `ProtectControlGroups`, `ProtectProc`,
     `ProcSubset`, `ReadOnlyPaths`, `InaccessiblePaths`, `TemporaryFileSystem`,
     `BindReadOnlyPaths`, `RootDirectory` and `RootImage`;
-  - **no resource limit**: no `Limit` directive of any kind, since a limit
-    set on admin-con passes through sudo and admin to the agent, whose
-    model loading it must not cut, so the box's defaults apply.
+  - **no resource limit**: no `Limit` directive of any kind. It was left
+    out while admin-con invoked sudo, "since a limit set on admin-con passes
+    through sudo and admin to the agent, whose model loading it must not
+    cut, so the box's defaults apply". admin-con now starts no process for
+    admin, and the unit is unchanged since the weaver-admin service replaced
+    the invoker.
 
   gate-con's unit and the server's take none of these either. They need
   none, and hardening them is security posture, which the hard boundaries
@@ -6837,16 +7075,18 @@ repository, read by the staging tool alone:
 - **`[locations]`, always required**: `binaries`, the directory the
   programs are placed in; `units`, the directory the unit files and their
   drop-ins are placed in; `config_root`, the directory holding the server's
-  `config.toml` and `connectors/<agent>/` beneath it.
+  `config.toml` and `connectors/<agent>/<plane>/` beneath it.
 - **`[server]`, where the server's unit is staged**: `account`, and
   `binary`, the built `weaver-web` to place.
 - **`[connectors]`, where the connectors are staged**: `gate_account`,
-  `admin_account`, `admin_path` (admin-con's `PATH`), `gate_con_binary`,
+  `admin_account`, `gate_group` and `admin_group` (each connector's unit's
+  `Group=`, and the group of its folder, config and key file),
+  `admin_path` (admin-con's `PATH`), `gate_con_binary`,
   `admin_con_binary`, and `handover`, the directory `register` wrote into
   (its `--out`), given with an agent and only then.
 - **`[[agent]]`, one per agent on the box**: `box` and `name` as registered,
-  the four box facts the connectors' configs require (`gate_socket`,
-  `trace_socket`, `weaver_admin`, `admin_log`), and optionally
+  the two box facts the connectors' configs require (`gate_socket` and
+  `admin_socket`), and optionally
   `stop_grace_secs`, `verb_bound_secs` and `backfill_bytes`, which default
   as admin-con's config does. **`backfill_bytes` is bounded as admin-con
   bounds it**, on this document's election of 2026-11-13: at most 268435456
@@ -6862,7 +7102,7 @@ appliance is a locked-down image and nothing of an agent rides it, and
 their word of the same day that the image's binaries are compiled inside
 it from a named commit. `[connectors]` with no `handover` and no
 `[[agent]]` stages the two programs, the two templates rendered with the
-image's accounts, `binaries`, `config_root` and `admin_path`, and the
+image's accounts and groups, `binaries`, `config_root` and `admin_path`, and the
 directories `binaries`, `units`, `config_root` and
 `<config root>/connectors`. It stages no handover, connector config or
 drop-in, and enables no instance, since an instance is an agent's name. A
@@ -6910,21 +7150,26 @@ nothing of the first's. It writes, under `<out>`:
 
 - **`files/`**, a tree mirroring each destination: the three units, each
   admin-con instance's stop-timeout drop-in, and each agent's two
-  connector configs. **A connector config is its handover file, unchanged,
-  then the box facts from the parameter file**, and the tool loads the
-  staged file through that connector's own config loader (`client::read_private`'s
-  trust rule on the staged copy, the plane, the members, the bounds and the
-  absolute paths), refusing where
-  it does not load, where its `agent` is not the parameter's `name`, or
-  where the handover file is missing or is not a regular file. A refusal
-  names the member, never the file's text, which carries a key. Each
-  handover file and each program is opened without following a symlink and
-  judged and read through the descriptor that open gave, as the
-  connectors' trust rule reads a config, so the check and the read are one
-  look at the name. **A handover file is held to that trust rule whole**:
-  the invoking user's, at `0600` or tighter, since it names the server the
-  connector will trust and carries its key, and the staged copy's `0600`
-  must not stand for a source anyone else could have written or read. The
+  connector configs, each beside its key file in its plane's folder. **A
+  connector config is its handover file, unchanged, then the box facts from
+  the parameter file and `key_file`, the destination of its key**; the key
+  file is the handover's key, unchanged, refused before anything is written
+  where it is not one PKCS #8 ECDSA P-256 block or the config's certificate
+  is not over it. The tool loads the staged config through that connector's
+  own loader of the config alone (`load_unkeyed`: section 8's trust rule
+  with the invoking user's uid and group, the staged copy being the
+  operator's, then the plane, the members, the bounds and the absolute
+  paths), since the key stands at `key_file` only once the manifest is
+  applied, refusing where it does not load, where its `agent` is not the
+  parameter's `name`, or where a handover file is missing or is not a
+  regular file. A refusal names the member, never the file's text, nor a
+  key. Each handover file and each program is opened without following a
+  symlink and judged and read through the descriptor that open gave, so the
+  check and the read are one look at the name. **A handover file is held to
+  a rule of its own**: the invoking user's, at `0600` or tighter, since a
+  config names the server the connector will trust and a key file is the
+  connector's key, and the staged copy must not stand for a source anyone
+  else could have written or read. The
   cost is the operator's: a handover downloaded through a browser from the
   admin's agents page arrives under the browser's umask, often `0644`, so
   the operator tightens it (`chmod 600`) before staging, and the refusal
@@ -6934,15 +7179,16 @@ nothing of the first's. It writes, under `<out>`:
   file, or for a program the built binary the parameter names), the
   destination, the owner, the group, the mode, and the SHA-256 of the source
   (`-` for a directory). The binaries, units and directories are `root`'s,
-  the directories and binaries at `0755` and the units at `0644`; each
-  connector config is its plane's account's at `0600`, as the connector's
-  trust rule requires, under an agent directory of `root`'s at `0755`. A
-  group of `-` is the owner's primary group.
+  the directories and binaries at `0755` and the units at `0644`; **each
+  connector's config and key file are `root`'s, of its plane's group, at
+  `0640`, in a folder of `root`'s, of that group, at `0750`**, as section
+  8's trust rule requires, under an agent directory of `root`'s at `0755`.
+  A group of `-` is the owner's primary group.
 - **Its answer**, one JSON object on stdout with the exit status agreeing,
   the register verbs' shape (section 8): `verb` `stage`, `ok`, and on
   success the manifest's path and its line count, or on refusal the reason.
 
-**`<out>` holds keys**, the connectors' configs, so it must not exist or be
+**`<out>` holds keys**, the connectors' key files, so it must not exist or be
 an empty directory of the operator's own at `0700` or tighter, and the tool
 makes it `0700` (a relative `<out>` is taken against the working
 directory, and its `.` components and repeated or trailing separators are
@@ -7387,14 +7633,19 @@ with no escape sequence in it. **One set of exit statuses serves every command:*
 | 5 | `expired` | the pairing alone: no code entered within the window |
 | 6 | `unknown` | the connection ended after the console may have acted, and the Pair page says which |
 
-The pairing takes three steps on the box, so that admin-con makes its own key under its
-own account and no command of this repository runs as root to parse what the network
-sent. `gate-con request` and `gate-con adopt` stand as built for the loop's install,
-which enrolls gate-con, and the pairing runs neither:
-1. **`admin-con request`**, under admin-con's account. In: the path of the connector's
-   config, which must not exist. Out: that file
-   created holding the connector's new key alone, under the trust rule a connector's
-   config already takes, and a `request` line carrying the certificate request. No dial.
+The pairing takes three steps on the box, so that no command of this repository runs as
+root on what the network sent: `request` runs as root and reads nothing, and `adopt`,
+which reads the answer, runs unprivileged and never opens the key (the brief of
+2026-11-27, child 6). `gate-con request` and `gate-con adopt` stand as built for the
+loop's install, which enrolls gate-con, and the pairing runs neither:
+1. **`admin-con request`**, as root. In: `--key-file`, the path of the connector's key
+   file, which must not exist, and `--group`, the connector's group by name. Out: that
+   file created new, never through a link, any access list it inherited from its
+   folder's default removed and its group and mode 0640 set, each by descriptor and
+   before the first key byte is written, a list still found after the removal refusing
+   as the command's fault, holding the new key's PKCS #8 PEM alone, under
+   section 8's trust rule; and a `request` line carrying the certificate request. A
+   failure after the create removes the file. No dial.
 2. **`admin-con pair`**, under an unprivileged account the image names. In: the
    console's address and port, admin-con's request, the survey's report (`--report`,
    required, sent at the stage `pairing`), a file read before any dial and refused as
@@ -7416,44 +7667,33 @@ which enrolls gate-con, and the pairing runs neither:
    - `unknown` (6), the connection ended after the answer was written and before the
      console's last word, with `admin`, the fingerprint of the answer's certificate,
      which the setup script shows beside the Pair page's (above)
-3. **`admin-con adopt`**, under admin-con's account. In: its config from step 1 and the
-   answer. It checks that the answer's certificate for its plane carries its own key's
-   public half and verifies under the authority the
-   answer carries, whose fingerprint is the one `pair` printed, and then writes the
-   complete config in place, the members `register` writes, so the connector's unit
-   reads it unchanged (section 8.1). Out: `adopted` (0), or `refused` (4) with its
-   reason, `key_mismatch` or `not_signed`, and nothing written. An answer carries no
-   `gate` member, and `gate-con adopt` given one refuses it as `usage`, since its plane
-   is not in it. **`adopt` appends and
-   never rewrites the key**: it finds the key's prefix by parsing the exact bytes
-   `request` wrote, never a stored length, refuses as `usage` a file whose prefix is not
-   a well-formed key-only config for its plane, and replaces only what follows the
-   prefix. A crash at any write leaves the key byte for byte and a re-run completes the
-   file, and a config left with no certificate is refused by the service at its start,
-   its `certificate` member missing.
+3. **`admin-con adopt`**, under an unprivileged account that reads no key file. In:
+   `--request`, the file holding step 1's `request` line, `--answer`, `--key-file`, the
+   path the config names, which `adopt` never opens and which need not exist where it
+   runs, and `--out`, the config to write, which must not exist. It checks that the
+   answer's certificate for its plane carries the request's public half in its own
+   public-key field, found by walking the certificate's structure and never by a search
+   of its bytes, so a copy of the key in an extension is not the certificate's key, and verifies
+   under the authority the answer carries, whose fingerprint is the one `pair` printed,
+   and then writes `--out` new, never through a link, at 0644, holding certificates and
+   paths alone: the members `register` writes and `key_file`, so the connector's unit
+   reads it unchanged once installed (section 8.1). Out: `adopted` (0), or `refused` (4)
+   with its reason, `key_mismatch` or `not_signed`, and nothing written; a relative
+   `--key-file`, a request line that is not one, an `--out` that stands, and an answer
+   carrying no certificate for the plane are `usage`, and nothing is written. An answer
+   carries no `gate` member, so `gate-con adopt` given one refuses it as `usage`.
 
-**The config reaches the agent's directory by a rename**, since a unit reads its config
-under the agent's name and the name arrives only with `paired`. `request` writes the
-config into the setup script's directory for the run, and after `paired` and before
-`adopt` the script moves admin-con's config into the agent's directory. Four conditions
-bind the move:
-- **A rename, never a copy.** The two directories are on one filesystem and the move is
-  `rename(2)`, which keeps the file's inode, owner and mode. A move that would cross
-  filesystems is refused and never done by copying, since a copy made by root is root's
-  file.
-- **Every command names its config.** `request`, `adopt` and the running service each
-  take `--config` with no default, as the connectors do as built.
-- **The key never leaves its config.** `request` writes the key once, into the config it
-  creates, under the connector's own account, and `adopt` adds the certificate and the
-  server's facts to that same file in place.
-- **`adopt` refuses a config whose owner or mode is wrong**, by the rule the connectors
-  apply at their start: a regular file of the connector's own uid, owner-only, opened
-  without following a symbolic link. A config the move left in any other state is
-  refused before `adopt` writes a byte, and the service refuses it again at its start.
+**A fixed root program of the appliance installs `adopt`'s output as the connector's
+config**, root's, of the connector's group, at 0640, in the connector's part of the
+agent's folder of settings, with the service's access-list entry granting read where the
+layout lays one (the brief of 2026-11-27's list for the other repository). Its name, its
+arguments and where each file stands are the appliance's; this repository's part is
+section 8's trust rule, which refuses any other shape at the connector's start, and the
+key file's path, which `request` was given and `adopt` names.
 
 **The steps after `paired` are the appliance's setup script's**, on the operator's ruling
-of 2026-11-23 that one interactive script finishes setup and ends in pairing: it moves
-admin-con's config and runs its `adopt`. The report has crossed with the pairing
+of 2026-11-23 that one interactive script finishes setup and ends in pairing: it runs
+`adopt` and the install of its output. The report has crossed with the pairing
 itself, and `setup report` (section 8.3) sends a report run again, which replaces the
 row (section 6.2). Weaver Web's pages wait on none of these
 steps, and the box commands keep their arguments and printed lines (the Planner's ruling
@@ -7613,7 +7853,13 @@ Its lines and exit statuses are section 8.2's.
 **The hello naming the setup purpose is the `setup` frame**,
 the connection's first, carrying the agent's name, the plane and the ask itself. The
 listener answers it with one `described`, `accepted` or `refusal` frame and closes, and
-a `setup` frame after a hello is refused as malformed. It makes two asks:
+a `setup` frame after a hello is refused as malformed. **Both asks run with the admin
+connector's group as their effective group**: they read admin-con's config and key
+under section 8's trust rule, as admin-con does, so they run as admin-con's own account
+or with that group named for the run, and run with root's group they are refused, the
+refusal naming the file's group and the effective group found and adding that these
+commands run with the admin connector's group (the review of child 6, 2026-11-27). It
+makes two asks:
 - **`admin-con setup describe`.** In: its config alone. Out: one `described` line (0)
   with these members:
   - `agent` and `agent_id`, the register row's name and identity
@@ -7863,9 +8109,11 @@ two connectors report.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| a register verb through the server is an admin's under the exclusion, a retired row is never live again, and its client configs are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the reservation, and a registration with no room for its configs is recorded and written; count the configs held and not those reserved, and five concurrent registers against room for four all land, past the bound; drop a rotation's re-check of its row inside the transaction, and a row the host retired after step three is live again; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line; drop the retired check from the host's rotation, and a row retired through the web is made live again by the host's `rotate` of its identity; drop the re-read of a revocation's row, and a revocation the host's overtook after step three answers and is audited as landed, though it revoked nothing; drop a revocation's notification, and the revoked plane's live connection stays open; revoke each plane by its own statement, and a retirement advances its row's version twice for one authored edit; drop the shared identity exclusion from a revocation, and a grant removal commits beneath a revocation held after its re-check; drop the grants page's mark, and a grant on a retired agent reads as any other |
+| a connector reads its config and its key file under section 8's trust rule, each by descriptor, the key opened only once the config has passed and the certificate checked over it at every load | perturbation in `src/link/trust_tests.rs`, files in a temporary folder of the test's own uid and access lists written by `fsetxattr`: admit a group-writable key, and a key at 0660 is read; drop the file's owner check, and a config of the connector's own uid is read under root's rule, or refused for its folder, whose sentence the test does not take; drop the key's access-list check, and a key a named party reads is read; drop the config's, and a config a named entry grants write is read; drop the folder's owner clause, or its group clause, and a folder of another owner, or of a group neither the connector's nor root's, is admitted while its file passes (the folder's status varied, since a test makes no folder of another owner). A folder others may write or enter, a symlink, a FIFO and each bound are refused in the same module, and in `src/link/client_tests.rs` a config carrying its key inline, a relative `key_file`, a key that is not one block and a key the certificate is not over are each refused at start, the inline key's value never printed |
+| a config never stands without its key: each plane's key is published before its config | perturbation in `src/link/tests.rs`, `a_staging_entry_swapped_before_the_publish_is_refused`: a staging entry swapped before the publish is refused for the gate key, the admin key and the admin config in turn, and after each no config stands without its key. Publish each config before its key, and the swapped gate key leaves the gate config standing alone |
+| a register verb through the server is an admin's under the exclusion, a retired row is never live again, and its client configs and key files are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the reservation, and a registration with no room for its configs is recorded and written; count the configs held and not those reserved, and five concurrent registers against room for eight files, two registers' worth, all land, past the bound; drop a rotation's re-check of its row inside the transaction, and a row the host retired after step three is live again; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line; drop the retired check from the host's rotation, and a row retired through the web is made live again by the host's `rotate` of its identity; drop the re-read of a revocation's row, and a revocation the host's overtook after step three answers and is audited as landed, though it revoked nothing; drop a revocation's notification, and the revoked plane's live connection stays open; revoke each plane by its own statement, and a retirement advances its row's version twice for one authored edit; drop the shared identity exclusion from a revocation, and a grant removal commits beneath a revocation held after its re-check; drop the grants page's mark, and a grant on a retired agent reads as any other |
 | an act's `ok` outcome commits with it, and a lost commit answer is classified by that record | perturbation in `src/admin_tests.rs`, `src/grants_tests.rs`, `src/agents_tests.rs`, `src/keys_tests.rs` and `src/host_tests.rs`, the commit's answer lost by a test fault after PostgreSQL applied it: write the `ok` outcome after the commit's answer instead of in the transaction, and each of the five person writes, the three grant and role writes, a revocation and a retirement, a registration and a rotation through the server, a token's redemption, a session's opening, a passkey's addition and removal (`src/keys_tests.rs`), and the host's bootstrap and token answers as failed (the web's writes with the server's failure, the host's commands with a refusal), its outcome `failed`, for an act that landed; and where a later act commits between the lost answer and the read-back, a rotation over a revocation or another admin's enable over a disable, the act is still classified as landed, which a read-back of its effect would not do; drop the read-back's wait on the act's own lock, give up on a disable's answer while its COMMIT is still completing, and the read-back finds no outcome and answers failed for an act that then lands |
-| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the sudo invoker over a fake `sudo` in `src/link/sudo_invoker_tests.rs`: free the slot at a reconnection while a timed-out verb's process still runs, and the new connection's admission `show` runs beside it. **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
+| the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the service's invoker over the fake service in `src/link/service_invoker_tests.rs`, `the_slot_is_held_across_a_reconnection`: free the slot as the invocation's task begins rather than at its end, and the new connection's admission `show` runs beside a verb past its bound (measured 2026-11-27). **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
 | a ClientHello without the pairing protocol meets the mutual-TLS configuration as built | perturbation in `src/link/pairing_tests.rs`: a client that trusts the authority, offers no ALPN and holds no certificate is refused by the handshake with the alert `certificate_required`, and no box waits. Choose the pairing configuration for every ClientHello, and that client is answered `waiting`. Let the mutual-TLS configuration admit a client with no certificate, as every standing link test still passes, and the handshake completes with no alert |
 | a pairing connection writes nothing before its code matches | perturbation in `src/link/pairing_tests.rs`, on a store of its own: a box dials, says its first frame, waits through heartbeats and meets a code not its own, and every table's rows and the operations log stay as they were. Write to the store as a pairing connection is served, and a table's rows change |
@@ -7891,7 +8139,7 @@ two connectors report.
 | the setup keeps one report, verbatim, a second run's replacing the row | perturbation in `src/enrollment_tests.rs`, `the_setup_keeps_its_one_report_verbatim_a_second_run_replacing_it`: a report and a second run's leave the second alone, byte for byte; one past the bound is refused on the box and at the listener, the kept report unchanged. Insert a row per report, and the first stands beside the second |
 | `admin-con setup report --stage drives` and `admin-con pair --drives-report`, version 1's two forms, each answer `usage` (2) as the arguments are read, before any config is read or any dial | perturbation in `tests/box_commands_usage.rs`, `setup_report_at_the_stage_drives_is_usage` and `pair_with_a_drives_report_is_usage`, which run the built admin-con: take `drives` as a stage again, or take `--drives-report` again, and each test fails (measured 2026-11-25) |
 | a `setup` frame whose report names version 1's stage `drives` does not parse at the listener and is refused `malformed`, and the same frame naming `pairing` is answered for what it is | perturbation in `src/link/tests.rs`, `a_setup_report_naming_the_stage_drives_is_refused_malformed`: take `drives` as another name of `pairing`, and the frame is answered `no_setup` (measured 2026-11-26) |
-| an adopted admin-con connects, and its row reads admin alone | end to end in `src/enrollment_tests.rs`: `admin-con request`, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `admin-con adopt`, and admin-con is admitted on the row, which reads admin alone and never present. `adopt`'s append is shown in `src/link/key_config_tests.rs`: a crash after the open, mid-certificate and before the sync leaves the key byte for byte, the service refuses the config each leaves, and a re-run completes it. Truncate one byte into the key's prefix, and the key's bytes move; accept another plane's header, and the gate's `adopt` takes the admin config |
+| an adopted admin-con connects, and its row reads admin alone | end to end in `src/enrollment_tests.rs`: `admin-con request`, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `admin-con adopt`, and admin-con is admitted on the row, which reads admin alone and never present. `request` and `adopt` are shown in `src/link/key_config_tests.rs`: the key laid new in its group at 0640 and read by the key's trust rule, a path that stands or a link refused, and a group the account may not set leaving no file; in a folder whose default access list grants another uid read, the key carrying no list (perturbation: drop the removal, and the key carries the named entry); a certificate over a P-384 key carrying the requested key's bytes in an extension refused `key_mismatch` (perturbation: search the certificate's bytes for the key, and it passes the key's check); `adopt` writing the members and `key_file` new at `--out` at 0644, the key file named never opened, the config then laid at 0640 loading through its connector with its key; and a crossed key, another authority, a relative `--key-file`, a request line that is not one, an answer with no certificate for the plane and an `--out` that stands each refused, nothing written |
 | the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
 | a first frame without a `pairing` stage report is refused `no_report`, and one whose report is not one JSON object within 64 KiB is refused `report_refused`, each before the box is listed; a frame carrying a report at version 1's stage `drives`, alone or beside a `pairing` report, is refused `frame_refused` | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_without_a_report_is_refused_no_report` and `a_report_that_is_not_one_object_within_64_kib_is_refused`: a hello with no report, one whose report is an array, one past 64 KiB and one naming `pairing` twice each hear their refusal and none is listed. Drop the checks at the first frame, and the box is listed. Read `drives` as `pairing` (a serde alias), and the two frames naming `drives` are not refused `frame_refused` (measured 2026-11-25) |
@@ -7957,8 +8205,12 @@ two connectors report.
 | the ceremonies in flight are bounded, each expiring and used once | perturbation in `src/passkeys_tests.rs`, on a paused clock: drop the cap, and a sixty-fifth ceremony starts; take a ceremony without removing it, and it finishes twice; drop the expiry, and a ceremony past five minutes is taken; keep expired ceremonies against the cap, and the table refuses while none is live |
 | the WebAuthn library links into the server binary alone | measurement and perturbation in `tests/connectors_link.rs`: `ldd` on the connectors as `cargo test` builds them finds no `libcrypto`, and on the server binary finds it, which shows the reading; and the package's normal graph without the default features holds no `openssl-sys` and no `webauthn-rs`, the build CLAUDE.md gives for agent boxes. Make the library a dependency the feature does not carry, and the graph holds it |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
-| the ceiling declared in the hello is exactly what the box's sudo rules grant | perturbation, against a fake `sudo` generated at test time in `src/link/sudo_invoker_tests.rs`: answer `grants` from anything but each verb's own `sudo -n -l` line, and a verb the rule refuses is declared, or one it grants is not |
-| a connector never acts on the agent: admin-con's stop invokes nothing | perturbation in `src/link/admin_con_tests.rs`: restore the orderly stop's `unload`, and a shutdown with `unload` in the ceiling invokes it. And against a fake `sudo` in `src/link/sudo_invoker_tests.rs`, where the rules grant `unload`, the stop runs no line, and with a child in flight it waits for the child and runs none |
+| the ceiling declared in the hello is exactly what the weaver-admin service's `grants` answer names, among the eight verbs (section 7.2) | perturbation in `src/link/service_invoker_tests.rs`, against the fake service, `the_grants_are_the_services_list_and_every_refusal_names_its_word`: answer `grants` with the eight verbs whatever the service names, and a verb it does not grant is declared (measured 2026-11-27) |
+| admin-con opens the trace on the weaver-admin service's socket, and every refusal of the opening is a closed door, never a refusal of the position, with one entry per change of a word that says admin-con is at fault (section 7.2) | in `src/link/admin_con_tests.rs`, against the fake service spliced to the fake relay: `a_relay_that_died_closes_the_door_with_no_mark_and_no_alert` (the service's `open`, a close before the header, then `relay_unreachable`), and `a_refused_trace_opening_is_a_closed_door_with_one_entry_per_change`, and `every_word_refusing_a_trace_opening_is_a_closed_door` over the seven words a trace opening can meet, spelled as the contract's table has them; perturbation: map `relay_unreachable` to the relay's refusal, and the first test's window carries a mark of the offset's refusal (measured 2026-11-27) |
+| a close before the trace's header is confirmed once, and a relay whose window passed is admitted at the same offset with no mark; under a deadline only with room, and a confirming opening with no header by the margin is a closed door with the position kept (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `a_close_before_the_header_is_opened_once_more_and_a_passed_window_admits_it`: drop the confirmation, and the close is read as the refusal, the file relayed again from its start (`[1, 2, 1, 2, 3]` for `[1, 2, 3]`; measured 2026-11-27); under a deadline, against the fake service, `a_close_under_a_deadline_is_confirmed_only_with_room`: drop the room's check, and a second opening is made with too little room and admitted; `a_confirming_opening_that_runs_out_of_time_is_a_closed_door`: read the timeout as the relay's refusal again, and a slow relay is a refusal of the position; drop the margin, and the second opening runs to the caller's own deadline (each measured 2026-11-27) |
+| a verb asks the weaver-admin service on a control connection of its own, every word that can answer it placed, and after a drop its run read by the service's `run` answer (section 7.2) | tests in `src/link/service_invoker_tests.rs` against the fake service, `every_word_at_a_verb_is_placed` reading the fourteen words a verb can meet and each row of the drop table in a test of its own; perturbations: read the service's `busy` as `fault`, and `every_word_at_a_verb_is_placed` is red; read another `instance` as "did not run", and `a_restart_after_a_drop_is_unknown` answers `not_started`; set the baseline aside, reading a drop with no id held by its verb alone, and `a_drop_after_a_show_or_a_fresh_start_takes_no_earlier_end_as_its_own`, `no_socket_for_the_bound_after_a_drop_is_unknown` and `a_poll_refused_for_good_is_unknown_and_a_passing_word_waits` each answer an earlier run's outcome as the later `load`'s; send a dropped `show` to the drop table, and `a_dropped_show_is_unknown` answers `not_started`; in `a_refusal_after_started_or_by_an_unknown_word_reads_the_run`, drop the guard on the held id, and a refusal after `started` answers `busy`, and read every word but `ask_outstanding` as a refusal before the start, and a word no verb's refusal holds answers `not_started` (each measured 2026-11-27) |
+| a verb the service refuses `not_granted` is audited `failed`, never run, and raises a failure rather than an unknown (sections 2.13, 2.14) | perturbation in `src/link/service_invoker_tests.rs`, against the real listener, `not_granted_is_audited_as_never_run`: leave `not_granted` out of the listener's `NEVER_RAN`, and the outcome stays unwritten (measured 2026-11-27) |
+| a connector never acts on the agent: admin-con's stop invokes nothing | perturbation in `src/link/admin_con_tests.rs`: restore the orderly stop's `unload`, and a shutdown with `unload` in the ceiling invokes it. And against the fake service in `src/link/service_invoker_tests.rs`, where the grants name `unload`, the stop asks nothing, and with a run in flight it waits for the run and asks nothing after it |
 | raising an alert never waits on the store or the log | perturbation in `src/alerts_tests.rs`: wait on the full queue in the raise instead of dropping, and with the worker held a refused verb's answer is held behind it and the raises time out |
 | one open alert per agent, kind and subject, its count right under concurrency | perturbation in `src/alerts_tests.rs`: drop the open alert's index and the insert's conflict clause, and sixteen raisers at once leave sixteen alerts; drop the conflict clause alone, and a repeated refusal is never counted on the open alert |
 | an acknowledgement names the version it read, and only a person holding `operator` on the agent acknowledges | perturbation in `src/alerts_tests.rs`: drop the version from the acknowledgement's write, and an acknowledgement naming a version a repeat has moved lands; drop the `operator` check, before the record and in the transaction, and an observer's acknowledgement lands |
@@ -7970,9 +8222,9 @@ two connectors report.
 | the agent page's load state and verbs are one fragment, re-fetched every 15 s through the grant scoping | perturbation, in `src/transition_tests.rs`, `the_run_panes_re_read_by_themselves`, against the real listener and a fake admin-con: the page wraps both panes in the fragment's trigger; the fragment is the page's own panes, kept from every cache; a state written between two fetches shows at the second, its warnings with it; a person holding no grant reads 404, a malformed identity 400, an ended session 401; drop the trigger from the page, drop the grant check, or render the fragment from another view, and the case fails |
 | an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
-| a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one; put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |
+| a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con and the fake service raises one; judge `own` by the line's uid against admin-con's own again, in `src/link/admin_log_tests.rs`, and the service's judgment is lost (measured 2026-11-27); put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |
 | a connector's entry is taken once, though it is sent again, and acknowledged only once durable | perturbation in `src/entries_tests.rs`: drop the run's mark, and an entry resent on a new connection is logged twice; read on past an entry the store did not take, and the next entry moves the mark past it, so its resend is taken for a duplicate and never logged; acknowledge without writing the entry's row, and 1,000 entries acknowledged while the drainer is held are never logged; delete a row whose line failed, and that entry's line is lost; drop the inbox's backoff, and rows that keep failing hold the entry behind them forever; keep the entry as `jsonb`, or leave a NUL in an alert's text, and an entry carrying a NUL is never applied; raise a row's alert in a transaction apart from its record on the row, fail the record, and the retry raises it again; drop the claim, and two drainers on one store write rows' lines twice; leave the drainer out of its listener's tasks, and a stopped listener's drainer applies rows after its stop; end the alerts' worker before the connections at a stop, and a teardown's unknown and its line are lost; skip a blank line of `admin.log`, and it is no entry; drop the connector's resend, and a window whose acknowledgements the server dropped stalls the pump for good; restart the resend's timer at every wake, and a line every quarter of the bound postpones it for as long as the stream lasts; choose due rows by their identity alone, and an entry behind seventy slowly failing rows starves; send an oversized `admin_log` entry in the failure shape, and the door refuses it at every resend |
-| admin-con reads `admin.log` from its start's baseline, a truncation or a regrowth seen | perturbation in `src/entries_tests.rs`: take every first open as the start's baseline, and lines written to a file absent at the start are skipped; take a baseline inside a line with no skip, and that line's rest is sent as a line of its own; drop the digest of the last bytes read, and a copy-truncate regrown between two looks is resumed mid-line |
+| admin-con reads `admin.log` through the service's `log` connection: each message its entry, every gap a discontinuity, `log_behind` reopened at once and a second with no line since on the backoff, only a connection that proved itself resetting the backoff, `log_unread` one entry per change, and a word outside a kind's shape a fixed kind (sections 2.14, 7.2) | perturbation in `src/link/admin_log_tests.rs`, against the fake service: drop the discontinuity at an opening admitted after a refusal, and the gap reads as continuous; raise the failure at every refused opening, and the retries raise one each; keep the word's memory across an admission, and the same word after it raises nothing; reset the backoff at every admission, and a service admitting and closing at once is reopened every half step; reopen at once after every `log_behind`, and the second comes with no wait; and in `src/link/admin_con_tests.rs`, against the real listener, give `service_<word>` for any word, and a word outside the shape closes the link at every reconnection (each measured 2026-11-27) |
 | a connector's backlog of entries is bounded, its drops counted and reported | perturbation in `src/entries_tests.rs`: drop the bound, and a backlog past it holds every entry |
 | the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |
 | a load that reset the agent is a `data_lost` alert, raised once | perturbation in `src/entries_tests.rs`: drop the reset check, and the trace's `load` event carrying `reset` raises nothing |
@@ -7981,9 +8233,9 @@ two connectors report.
 | a state by event under a door that closed at or after it says so on the load state, the warning beside a verb and the constituents, each to the millisecond, until a `show` reads it, and says `show` is outside the live ceiling where it is, and that nothing reads it where the live admin-con states no `close_show` | perturbation, in `src/transition_tests.rs`, `a_state_by_event_under_a_closed_door_says_so` and `a_state_by_event_under_a_closed_door_without_show_says_nothing_reads_it`, against the real listener and a fake admin-con, and `src/surfaces/admin_table.rs`, `a_state_by_event_stands_under_a_door_that_closed_at_or_after_it`: drop the line from the load state, the warning or the constituents, or date it to the second, and the page says the state as if it were current; compare strictly, drop the source or drop the door's state, and a close in the state's own millisecond, a state by `show` or an open door reads otherwise; say that `show` reads it whatever the ceiling, and the page claims a read nothing makes; in `a_transition_read_after_the_close_takes_no_line_on_the_warning_or_the_constituents`, let the warning take the line under a transition, and it dates the transition by the event, or let constituents read after the close take it, and the page says nothing has read them since; in `a_state_by_event_under_a_door_an_older_admin_con_closed_says_nothing_reads_it`, drop the third wording, and the page says that `show` reads a state nothing will ask (11 cases, each caught) |
 | a recovery holds exactly one of the person's places for its whole life | perturbation in `src/alerts_tests.rs`: admit again inside the sequence, and with the person's other three asks outstanding the choice's save-point is shed |
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
-| no privileged invocation exists outside admin-con's sudo invoker | perturbation, two instruments. A test, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with the program's word allowed in `src/link/sudo_invoker.rs` and its test module alone; shown to fail when one of each family is planted, in Rust and in a README fence, when the program is planted in another file of the invoker's name, and when another family is planted in the invoker's own files. And the argv instrument in `src/link/sudo_invoker_tests.rs`: plant the principal's name from the ask into the command, and the line the fake records is no longer exactly `sudo -n <weaver_admin> <verb> <agent>`. And no test reaches the real program: a test build's invoker refuses, before any spawn, a `PATH` that is not exactly one directory holding an executable regular file named `sudo` (`fake_only`), the child's `PATH` the generated fake's directory alone. `a_test_invoker_refuses_a_path_beyond_the_fakes_directory_and_spawns_nothing`: a fake that cannot be executed and a recording sentinel in a second directory, the run and the listing refused with nothing spawned; drop the guard, and the sentinel records the run `execvp` falls through to. `a_test_invoker_refuses_a_fake_it_cannot_execute_and_spawns_nothing`: the fake's directory alone with the fake not executable, refused by the guard; drop it, and the spawn fails naming no guard. The suite also runs under the kernel's no-new-privileges flag, a layer independent of the guard (each measured 2026-11-18) |
+| no privileged invocation exists in the repository (section 7.2) | perturbation, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with no file excepted; shown to fail when one of each family is planted, in Rust and in a README fence, and in the two files that once held admin-con's sudo invoker. Restore that invoker's file, tracked, and the test is red (measured 2026-11-27). No test reaches a privileged program: admin-con's verbs reach the fake service of `src/link/fake_service.rs`, which runs no program |
 | the staged units carry section 8.1's properties, and admin-con's sets nothing the contract forbids | perturbation in `src/stage_tests.rs`, rendering with invented parameters into a temporary directory: drop `UMask`, `KillMode=mixed`, the stop timeout or `PATH` from a template, and the read of the rendered unit fails; plant one directive of each of section 8.1's five forbidden groups in admin-con's template, and the read fails; drop the renderer's refusal of a placeholder it does not fill, and its test renders such a template instead of refusing it. And the service manager's own verifier: each rendered unit, instanced, passes `systemd-analyze verify` with nothing on its error stream, since the verifier warns and still exits 0 on an unknown key or a value it cannot parse (measured 2026-11-11, systemd 262); the test prints a `skipped:` line where the verifier is absent |
-| a staged connector config is its handover file and the box facts, and loads under the connector's own rule | perturbation in `src/stage_tests.rs`: drop a box fact from the composition, and the connector's loader refuses the staged file; stage an admin plane's handover file as gate-con's, or one naming another agent, and the tool refuses at the staged file's load and leaves `<out>` as it found it; drop that load, or the agent's check, or the removal after a refusal, and the case stages or leaves `<out>` behind |
+| a staged connector config is its handover file, the box facts and `key_file`, beside its handover key, and loads under the connector's own loader of the config alone | perturbation in `src/stage_tests.rs`: drop a box fact from the composition, and the connector's loader refuses the staged file; drop the key's check against its config's certificate, and another credential's key stages beside it; stage an admin plane's handover file as gate-con's, or one naming another agent, and the tool refuses at the staged file's load and leaves `<out>` as it found it; drop that load, or the agent's check, or the removal after a refusal, and the case stages or leaves `<out>` behind |
 | the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]`, a handover with no agent, an agent with no handover, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink, a directory, open to others or not the operator's own, a location that is a program's destination or lies under one, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty. And a second run on the same `<out>`, its check passed before the first wrote, with `<out>` absent and with it standing empty: refused, the first run's files and manifest unchanged; make `files/` without exclusion, or let a run that made nothing remove `<out>`, and the test fails. And a relative `<out>` with a `.` component and repeated and trailing separators is taken against the working directory and stages, a `..` kept and refused: drop the normalization, and the case is refused for its `.` |
 | an appliance image stages the connectors' half and nothing of an agent | perturbation in `src/stage_tests.rs`, `an_image_stages_the_connectors_programs_and_templates_and_nothing_of_an_agent`, the manifest compared whole with the rendered units' lines and every file written: refuse `[connectors]` with no agent as before, and the image is refused; admit a handover with no agent, or an agent with no handover, and `every_parameter_out_of_shape_is_refused_and_writes_nothing` stages the case or refuses it for another reason (3 cases, each caught) |
 | the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
@@ -8097,8 +8349,9 @@ two connectors report.
 | the data door never serves the pairing protocol (section 8) | perturbation in `src/link/pairing_tests.rs`, `the_data_door_never_serves_the_pairing_protocol`: serve the pairing at every door, and a box dialing the data door waits there (measured 2026-11-25) |
 | a connector dials from its `local_address` where one is named (section 8) | perturbation in `src/link/client_tests.rs`, `a_connector_dials_from_its_local_address`: drop the bind, and the server sees the connection from `127.0.0.1` (measured 2026-11-25) |
 | `gate_listen` and `gate_address` parse, default absent, and `gate_address` without `gate_listen` is refused at load; gate-con's config carries the data door's address (section 8) | `src/config.rs`'s tests, `the_data_door_is_optional_and_its_address_needs_it`; perturbation in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: write the management door's address into gate-con's config, and the two-door case fails (measured 2026-11-25) |
-| admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with no `sudo` run, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener on a row whose gate is not enrolled, run as the binary runs it, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: read an absent `admin_log` as a failure, and an alert stands; choose the sudo invoker with no agent laid, and admin-con is never admitted (each measured 2026-11-25) |
-| admin-con's three box facts stand together, one fact chooses the invoker, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `the_box_facts_stand_together_and_one_fact_chooses_the_invoker`: drop the refusal of some and not all, and the half-laid config loads; drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (each measured 2026-11-25) |
+| every line on the weaver-admin service's socket is read within its bound and never past it: the opening's answer at 4096 bytes within 11 seconds, a control line at 256 KiB, a log line at 64 KiB, and the connector's own lines at 4096 bytes before a byte is sent (section 7.2) | tests in `src/link/admin_service_tests.rs` against the fake service of `src/link/fake_service.rs`, among them every opening word at each purpose it answers; perturbation, `an_answer_past_its_bound_is_malformed`: read the opening's answer at `usize::MAX` in place of `OPENING_BOUND`, and the client answers `Open` on a padded answer past 4096 bytes (measured 2026-11-27) |
+| admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with nothing asked of the service, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener on a row whose gate is not enrolled, run as the binary runs it, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: choose the service's invoker with no agent laid, and its unanswered grants raise an alert (measured 2026-11-27) |
+| admin-con's one box fact, `admin_socket`, chooses the invoker, a retired member is refused naming it, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `one_box_fact_chooses_the_invoker_and_retired_members_are_refused`: drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (measured 2026-11-25); drop the refusal of a retired member, `weaver_admin`, `trace_socket` or `admin_log`, and the old config loads with the member ignored (measured 2026-11-27) |
 | an admission on a plane a pairing set to not enrolled is refused `not_live`, never as a store failure (section 8) | perturbation in `src/link/tests.rs`, `an_admission_on_a_plane_set_to_none_is_refused_not_live`: read the fingerprint as a string, and the admission fails decoding (measured 2026-11-25) |
 | a mistyped `local_address` is refused naming the member and never its value (section 8) | perturbation in `src/link/admin_con_tests.rs`, `a_mistyped_local_address_is_refused_naming_the_member`: drop the member from admin-con's list, and the refusal names none; drop the check by name in `client::parse_config`, and the refusal names the file's first member, since serde's flatten drops the member's place (each measured 2026-11-25) |
 
@@ -8375,16 +8628,16 @@ a `web-` assertion beside `weaver-admin`'s.
   and grants no action on any agent by itself. The converser this document
   had proposed is not among them. **One reading is the operator's to
   confirm**: one role of each kind per agent, held by any number of people,
-  per section 2.13. Whether a grant here and a sudo rule on the box share one
+  per section 2.13. Whether a grant here and the service's grant on the box share one
   vocabulary was part of this election, and the answer is that they need
-  not: the box's rules carry no `turn`, the gate's own admission governing
+  not: the box's grant carries no `turn`, the gate's own admission governing
   the data plane, and a role here names `turn` as an action this crate's
   gate checks.
 - **What section 7 is called, now that one of its three is not a seam**,
   opened 2026-09-16 by the act that deleted this crate's seam record to
   `weaver-admin`. The heading reads "The seams", and 7.2's admin verbs are
-  reached through admin-con's sudo invoker on the agent's box, as fixed
-  command lines and never as a process the server runs, under a contract
+  reached through admin-con, which asks the weaver-admin service on the
+  agent's box to run fixed command lines, and never as a process the server runs, under a contract
   that binds this crate to nothing. Renaming the heading, moving 7.2 out from
   under it, and widening the word are three answers and this document
   elects none of them. Nothing in the section's content is wrong and no
@@ -8520,10 +8773,11 @@ a `web-` assertion beside `weaver-admin`'s.
   exchange.
 - **The connectors' pairing and their accounts, closed on this repository's side
   2026-11-17 by section 8.2**, opened 2026-11-15 (sections 8.1 and 8.2). Each
-  connector's `request` and `adopt` run under its own account and `pair` under an
-  unprivileged one, and each config reaches the agent's directory by a rename, so no
-  command of this repository runs as root and the one privileged invocation stays
-  admin-con's sudo invoker (section 7.2). The accounts' names and the services' enabling
+  connector's `request` runs as root and reads nothing the network sent, `adopt` and
+  `pair` run under unprivileged accounts, and a fixed root program of the appliance
+  installs `adopt`'s output (the brief of 2026-11-27, child 6), so no command of this
+  repository runs as root on what the network sent and no privileged invocation stands
+  in it (section 7.2). The accounts' names and the services' enabling
   are the image's, with WeaverAgent's documents naming the accounts, an ask upstream
   (`weaver-web-PRD` section 8).
 - **The exchange's audit principal and the row's author, closed 2026-11-17 by section
@@ -8723,3 +8977,13 @@ a `web-` assertion beside `weaver-admin`'s.
   paragraphs on load and unload and on the console's stop and start. Settled by
   WeaverAgent's act on the operator contract, then by this repository's act on
   admin-con's verb map.
+- **admin-con's unit now that it runs nothing, opened 2026-11-27** (section 8.1): whether
+  admin-con's unit keeps the path parameter and keeps setting none of the
+  no-new-privileges directives, the capability and system call filters, the private
+  views and the limits, each of which was left so while admin-con invoked sudo. The
+  unit is unchanged since the weaver-admin service replaced the invoker
+  (`act/the-connectors-side-of-the-socket`). Whether admin-con's context must still
+  leave admin and the agent what they need is set by `weaver-admin-operator-contract`
+  section 2, which is WeaverAgent's and may change with the service in the invoker's
+  place, so this waits on that section first. Hardening the unit is security posture,
+  which the hard boundaries keep out of this repository either way.

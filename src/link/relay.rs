@@ -1,7 +1,10 @@
 //! The trace relay's client (Spec 7.2): admin-con's one reader of the
 //! agent's record, through the door the agent's start step opens, per
-//! `weaver-types-Spec` section 3.1. admin-con reads no file: it dials the
-//! relay's socket, sends one `TraceRequest` line naming a position, and
+//! `weaver-types-Spec` section 3.1, reached through the weaver-admin
+//! service's socket (`weaver-admin-operator-contract` section 8.5). admin-con
+//! reads no file and dials no relay itself: it opens a `trace` connection on
+//! the service's socket, and after the service's `open` the connection is
+//! the relay's wire. It sends one `TraceRequest` line naming a position, and
 //! reads a `TraceHeader` line naming the file's identity and, from a
 //! current relay, its length, then the trace's own lines byte for byte, a
 //! heartbeat while the relay is idle, and `truncated` before the stream
@@ -18,18 +21,22 @@
 //! so a position after a record past `RECORD_BOUND` is still one the relay
 //! verifies.
 //!
-//! **admin-con does not check the relay's peer**: the relay's socket stands
-//! in a root-owned run directory that only the agent's access group reaches,
-//! per `weaver-admin-Spec` section 6, so only root could stand a false relay
-//! at that path, and the contract names no identity for the reader to check.
+//! **A close before the header has three causes** (section 8.5): the
+//! relay's refusal of the position, a relay that died after the dial, or a
+//! request that reached the relay after its window. This module reads it as
+//! `Dial::Refused`; admin-con confirms it once (`admin_con::dial_relay`).
+//!
+//! **admin-con does not check the relay's peer**: the service admits
+//! admin-con on its socket and dials the relay itself, per the contract's
+//! section 8, which names no identity for the reader to check.
 
+use crate::link::admin_service::{self, ANSWER_WAIT, Opened, Purpose};
 use crate::link::frames::{LINE_BOUND, Position};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
 
 /// A record longer than this is not relayed: its event, re-encoded inside a
 /// frame, could pass the link's line bound. It is read through, hashed whole
@@ -121,15 +128,37 @@ pub enum Dial {
     /// No relay stands at the socket, or it said nothing usable: the door
     /// is closed.
     Closed(String),
+    /// **The service refused the trace opening** with one of its words
+    /// (`weaver-admin-operator-contract` section 8.2): the door is closed,
+    /// as by a failed dial, and never a refusal of the position.
+    Shut { word: String, why: String },
 }
 
-/// **Dial the relay and request the stream from `from`**: one request line,
-/// then the header within `HEADER_BOUND`. The offset is sent with the
-/// position's digest, and offset zero with none, as the relay requires.
-pub async fn dial(socket: &Path, from: &Position) -> Dial {
-    let mut stream = match UnixStream::connect(socket).await {
-        Ok(stream) => stream,
-        Err(e) => return Dial::Closed(format!("dialing the trace relay: {e}")),
+/// **The trace request goes within this of reading `open`**
+/// (`weaver-admin-operator-contract` sections 8.5 and 8.7).
+pub const REQUEST_WITHIN: Duration = Duration::from_secs(1);
+
+/// **Open a `trace` connection on the weaver-admin service's socket and
+/// request the stream from `from`** (`weaver-admin-operator-contract`
+/// section 8.5): the opening names the agent, the service answers `open`
+/// or one refusal, and after `open` the connection is the relay's wire, one
+/// request line sent within `REQUEST_WITHIN`, then the header within
+/// `HEADER_BOUND`. The offset is sent with the position's digest, and
+/// offset zero with none, as the relay requires.
+pub async fn dial(socket: &Path, agent: &str, from: &Position) -> Dial {
+    let opened = admin_service::open(socket, Purpose::Trace, agent, ANSWER_WAIT).await;
+    let mut stream = match opened {
+        Ok(Opened::Open(connection)) => connection.into_inner(),
+        Ok(Opened::Refused(refusal)) => {
+            return Dial::Shut {
+                why: format!(
+                    "the weaver-admin service refused the trace opening: {}: {}",
+                    refusal.word, refusal.detail
+                ),
+                word: refusal.word,
+            };
+        }
+        Err(e) => return Dial::Closed(format!("opening the trace on the service's socket: {e}")),
     };
     let request = TraceRequest {
         offset: from.offset,
@@ -143,11 +172,17 @@ pub async fn dial(socket: &Path, from: &Position) -> Dial {
             line.len()
         ));
     }
-    if let Err(e) = stream.write_all(&line).await {
-        return Dial::Closed(format!("sending the trace request: {e}"));
+    match tokio::time::timeout(REQUEST_WITHIN, stream.get_mut().write_all(&line)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Dial::Closed(format!("sending the trace request: {e}")),
+        Err(_) => {
+            return Dial::Closed(format!(
+                "the trace request was not sent within {REQUEST_WITHIN:?} of the service's open"
+            ));
+        }
     }
     let mut stream = Stream {
-        reader: BufReader::new(stream),
+        reader: stream,
         identity: String::new(),
         length: None,
         line: Vec::new(),
@@ -203,7 +238,7 @@ enum Raw {
 
 /// The relay's stream, after its header.
 pub struct Stream {
-    reader: BufReader<UnixStream>,
+    reader: BufReader<tokio::net::UnixStream>,
     /// The file's identity, from the header.
     pub identity: String,
     /// The header's length, where the relay names one: everything the file

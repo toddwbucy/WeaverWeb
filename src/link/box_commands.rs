@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::link::box_line::{Nothing, Printer, Status};
-use crate::link::client::{ASK_SECS, Asked, Link, LinkConfig, parse_config, read_private};
+use crate::link::client::{ASK_SECS, Asked, Link, LinkConfig, Trust, parse_config, read_private};
 use crate::link::frames::{FromClient, PairReport, Plane, REPORT_BOUND, SetupAsk, Stage, ToClient};
 use crate::link::key_config::{self, AdoptRefused, AnswerFile, RequestRefused};
 use crate::link::pair_client::{self, Claim, DialError, Heard, LastWord};
@@ -33,28 +33,41 @@ const LINK_MEMBERS: &[&str] = &[
     "plane",
     "server_certificate",
     "certificate",
-    "key",
+    "key_file",
     "local_address",
 ];
 
-/// **`request`'s arguments**: the config to create, which must not exist.
+/// **`request`'s arguments** (the brief of 2026-11-27, child 6): the key
+/// file to create, which must not exist, and the connector's group, which
+/// reads it. Run as root.
 #[derive(Debug, clap::Args)]
 pub struct RequestArgs {
-    /// The connector's config to create, holding its new key alone.
+    /// The connector's key file to create, holding its new key alone.
     #[arg(long)]
-    pub config: PathBuf,
+    pub key_file: PathBuf,
+    /// The connector's own group, the key file's group.
+    #[arg(long)]
+    pub group: String,
 }
 
-/// **`adopt`'s arguments**: the config `request` created and the answer
-/// `pair` wrote.
+/// **`adopt`'s arguments** (the brief of 2026-11-27, child 6): the request
+/// line `request` printed, the answer `pair` wrote, the key file the config
+/// names, which `adopt` never opens, and the config to write, which must
+/// not exist. Run unprivileged.
 #[derive(Debug, clap::Args)]
 pub struct AdoptArgs {
-    /// The connector's config from `request`, completed in place.
+    /// What the connector's `request` printed: its `request` line.
     #[arg(long)]
-    pub config: PathBuf,
+    pub request: PathBuf,
     /// The answer file `pair` wrote.
     #[arg(long)]
     pub answer: PathBuf,
+    /// The connector's key file, absolute, written into the config.
+    #[arg(long)]
+    pub key_file: PathBuf,
+    /// The config to write.
+    #[arg(long)]
+    pub out: PathBuf,
 }
 
 /// **`pair`'s arguments** (Spec 8.2).
@@ -201,18 +214,23 @@ struct Fingerprints {
     admin: String,
 }
 
-/// **`request`** (Spec 8.2): the config created holding the new key alone,
-/// and its `request` line. No dial.
-pub fn request<O: Write, E: Write>(p: &mut Printer<O, E>, plane: Plane, config: &Path) -> Status {
-    match key_config::request(plane, config) {
+/// **`request`** (Spec 8.2; the brief of 2026-11-27, child 6): the key
+/// file created holding the new key alone, its group the named one at mode
+/// 0640, and its `request` line. No dial.
+pub fn request<O: Write, E: Write>(p: &mut Printer<O, E>, args: &RequestArgs) -> Status {
+    let group = match group_named(&args.group) {
+        Ok(gid) => gid,
+        Err(why) => return p.ended(Status::Usage, &why),
+    };
+    match key_config::request(&args.key_file, group) {
         Ok(request) => {
             let status = p.outcome(Status::Done, "request", &RequestLine { request: &request });
-            // **The way on from an undelivered line**: the config stands
-            // with its key and no certificate, which no console has seen.
+            // **The way on from an undelivered line**: the key stands, which
+            // no console has seen.
             if status != Status::Done {
                 p.reason(&format!(
-                    "{} was made with a new key and no certificate, and its request line was not delivered: remove it and run request again",
-                    config.display()
+                    "{} was made with a new key, and its request line was not delivered: remove it and run request again",
+                    args.key_file.display()
                 ));
             }
             status
@@ -222,15 +240,50 @@ pub fn request<O: Write, E: Write>(p: &mut Printer<O, E>, plane: Plane, config: 
     }
 }
 
+/// **The group named**, by the system's group database: its id, or why
+/// there is none. No group is named in this repository; the install passes
+/// it.
+fn group_named(name: &str) -> Result<libc::gid_t, String> {
+    let c =
+        std::ffi::CString::new(name).map_err(|_| format!("the group {name:?} holds a NUL byte"))?;
+    // SAFETY: an all-zero group is valid for getgrnam_r to fill.
+    let mut group: libc::group = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0 as libc::c_char; 16 * 1024];
+    let mut found: *mut libc::group = std::ptr::null_mut();
+    // SAFETY: a NUL-terminated name, a group, a buffer of its stated length
+    // and a result pointer, as getgrnam_r takes them.
+    let rc = unsafe {
+        libc::getgrnam_r(
+            c.as_ptr(),
+            &mut group,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut found,
+        )
+    };
+    if rc != 0 {
+        return Err(format!(
+            "reading the group {name:?}: {}",
+            std::io::Error::from_raw_os_error(rc)
+        ));
+    }
+    if found.is_null() {
+        return Err(format!("no group is named {name:?}"));
+    }
+    Ok(group.gr_gid)
+}
+
 /// **`adopt`** (Spec 8.2): `adopted`, or `refused` with its reason and
 /// nothing written.
-pub fn adopt<O: Write, E: Write>(
-    p: &mut Printer<O, E>,
-    plane: Plane,
-    config: &Path,
-    answer: &Path,
-) -> Status {
-    match key_config::adopt(plane, config, answer) {
+pub fn adopt<O: Write, E: Write>(p: &mut Printer<O, E>, plane: Plane, args: &AdoptArgs) -> Status {
+    let adopting = key_config::Adopting {
+        plane,
+        request: &args.request,
+        answer: &args.answer,
+        key_file: &args.key_file,
+        out: &args.out,
+    };
+    match key_config::adopt(&adopting) {
         Ok(answer) => p.outcome(
             Status::Done,
             "adopted",
@@ -247,10 +300,6 @@ pub fn adopt<O: Write, E: Write>(
         Err(AdoptRefused::Fault(why)) => p.ended(Status::Fault, &why),
     }
 }
-
-/// The longest request line `pair` reads: a connector's `request` line is
-/// far inside it.
-const REQUEST_LINE_BOUND: usize = 16 * 1024;
 
 /// **A report file `pair` carries** (Spec 8.2): read never through a link,
 /// a regular file, UTF-8, one JSON object within `REPORT_BOUND`, else the
@@ -279,44 +328,6 @@ fn read_report_file(path: &Path) -> Result<String, String> {
         ));
     }
     Ok(report)
-}
-
-/// A request file as `pair` reads it: what `request` printed, its one
-/// `request` line, never through a link and within its bound.
-fn read_request(path: &Path) -> Result<String, String> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|e| format!("opening {}: {e}", path.display()))?;
-    let regular = file.metadata().map(|m| m.file_type().is_file());
-    if !matches!(regular, Ok(true)) {
-        return Err(format!("{} is not a regular file", path.display()));
-    }
-    let mut text = String::new();
-    file.take(REQUEST_LINE_BOUND as u64 + 1)
-        .read_to_string(&mut text)
-        .map_err(|e| format!("reading {}: {e}", path.display()))?;
-    #[derive(serde::Deserialize)]
-    struct Line {
-        event: String,
-        request: String,
-    }
-    match serde_json::from_str::<Line>(text.trim_end()) {
-        Ok(line)
-            if line.event == "request"
-                && line
-                    .request
-                    .starts_with("-----BEGIN CERTIFICATE REQUEST-----")
-                && text.len() <= REQUEST_LINE_BOUND =>
-        {
-            Ok(line.request)
-        }
-        _ => Err(format!(
-            "{} is not the request line a connector's request printed",
-            path.display()
-        )),
-    }
 }
 
 /// The machine's own name, the default box.
@@ -383,7 +394,7 @@ pub fn heard<O: Write, E: Write>(p: &mut Printer<O, E>, heard: &Heard) -> Status
 /// line with the code and the authority's fingerprint, then the answer
 /// written to its file, the box's word, and the console's last word.
 pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) -> Status {
-    let admin_request = match read_request(&args.admin_request) {
+    let admin_request = match key_config::read_request_line(&args.admin_request) {
         Ok(request) => request,
         Err(why) => return p.ended(Status::Usage, &why),
     };
@@ -490,13 +501,22 @@ pub async fn pair<O: Write, E: Write>(p: &mut Printer<O, E>, args: &PairArgs) ->
     }
 }
 
-/// admin-con's link from its config, or the `usage` it is.
+/// What a setup command's refusal of its config or key adds: the group it
+/// runs under (Spec 8.3).
+const SETUP_GROUP: &str = "`admin-con setup describe` and `setup report` read admin-con's config and key as admin-con does, so they run with the admin connector's group, the group of those two files, as their effective group";
+
+/// admin-con's link from its config, or the `usage` it is. The config and
+/// the key are read under the connector's trust rule, so these commands run
+/// with the admin connector's group as their effective group, and a refusal
+/// says so.
 fn setup_link(config: &Path) -> Result<Link, String> {
-    let content = read_private(config).map_err(|e| format!("{e:#}"))?;
-    let link: LinkConfig =
+    let content = read_private(config).map_err(|e| format!("{e:#}; {SETUP_GROUP}"))?;
+    let mut link: LinkConfig =
         parse_config(config, &content, LINK_MEMBERS).map_err(|e| format!("{e:#}"))?;
     link.expect_plane(Plane::Admin)
         .map_err(|e| format!("{e:#}"))?;
+    link.load_key(config, &Trust::connector())
+        .map_err(|e| format!("{e:#}; {SETUP_GROUP}"))?;
     Link::new(link).map_err(|e| format!("{}: {e:#}", config.display()))
 }
 
@@ -620,34 +640,76 @@ pub(crate) async fn setup_report_within<O: Write, E: Write, R: Read>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::link::authority::Authority;
     use crate::link::pair_client::Answer;
     use std::os::unix::fs::PermissionsExt;
 
-    /// **`request` whose line is not delivered says where its config stands**:
-    /// `fault`, the config made with its new key, and standard error naming
-    /// it and the way on, so a re-run's `Exists` refusal is no dead end.
+    /// **The name of the test's own effective group**, which `request
+    /// --group` takes: the system's group database, read here alone.
+    pub(crate) fn own_group() -> String {
+        // SAFETY: getegid takes nothing and cannot fail; an all-zero group
+        // is valid for getgrgid_r to fill, with a buffer of its stated
+        // length and a result pointer.
+        unsafe {
+            let mut group: libc::group = std::mem::zeroed();
+            let mut buf = vec![0 as libc::c_char; 16 * 1024];
+            let mut found: *mut libc::group = std::ptr::null_mut();
+            let rc = libc::getgrgid_r(
+                libc::getegid(),
+                &mut group,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut found,
+            );
+            assert!(
+                rc == 0 && !found.is_null(),
+                "the test's own group has a name"
+            );
+            std::ffi::CStr::from_ptr(group.gr_name)
+                .to_str()
+                .unwrap()
+                .to_owned()
+        }
+    }
+
+    /// **`request` whose line is not delivered says where its key stands**:
+    /// `fault`, the key file made, and standard error naming it and the way
+    /// on, so a re-run's `Exists` refusal is no dead end.
     ///
     /// Perturbation: ignore the line's failure, and `request` exits `done`
     /// with no request line.
     #[test]
-    fn a_request_whose_line_is_not_delivered_names_the_config_it_made() {
+    fn a_request_whose_line_is_not_delivered_names_the_key_it_made() {
         let dir = crate::test_dir::tempdir().unwrap();
-        let config = dir.path().join("admin-con.toml");
+        let key_file = dir.path().join("admin-con.key");
         let out = crate::link::box_line::tests::Refusing { at_flush: false };
         let mut p = Printer::new("admin-con request", out, Vec::new());
-        assert_eq!(request(&mut p, Plane::Admin, &config), Status::Fault);
-        assert!(config.is_file(), "the config was made");
+        let args = RequestArgs {
+            key_file: key_file.clone(),
+            group: own_group(),
+        };
+        assert_eq!(request(&mut p, &args), Status::Fault);
+        assert!(key_file.is_file(), "the key file was made");
         let (_, err) = p.into_inner();
         let err = String::from_utf8(err).unwrap();
         let named = format!(
-            "admin-con request: {} was made with a new key and no certificate",
-            config.display()
+            "admin-con request: {} was made with a new key, and its request line was not delivered",
+            key_file.display()
         );
         assert!(err.contains(&named), "{err}");
         assert!(err.contains("remove it and run request again"), "{err}");
+
+        // A group the system does not know: usage, and no file made.
+        let unknown = dir.path().join("unknown.key");
+        let mut p = Printer::new("admin-con request", Vec::new(), Vec::new());
+        let args = RequestArgs {
+            key_file: unknown.clone(),
+            group: "no-such-group-weaver-web-test".into(),
+        };
+        assert_eq!(request(&mut p, &args), Status::Usage);
+        assert!(!unknown.exists());
     }
 
     /// The setup asks' bound in these tests, the commands' own being 30 s.
@@ -657,6 +719,9 @@ mod tests {
     /// `authority`.
     fn admin_config(dir: &Path, authority: &Authority, server: &str) -> PathBuf {
         let credential = authority.mint_client("karl", Plane::Admin).unwrap();
+        let key_file = dir.join("admin-con.key");
+        std::fs::write(&key_file, &credential.key_pem).unwrap();
+        std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o600)).unwrap();
         let mut table = toml::Table::new();
         for (member, value) in [
             ("server", server.to_owned()),
@@ -666,7 +731,7 @@ mod tests {
             ("plane", "admin".to_owned()),
             ("server_certificate", authority.certificate_pem().to_owned()),
             ("certificate", credential.certificate_pem),
-            ("key", credential.key_pem),
+            ("key_file", key_file.display().to_string()),
         ] {
             table.insert(member.into(), value.into());
         }
@@ -865,5 +930,25 @@ mod tests {
                 assert!(err.contains("a frame\\x1b[2J"), "{err}");
             }
         }
+    }
+
+    /// **A setup command refused its config says which group it runs
+    /// under** (Spec 8.3): a config the trust rule refuses, here one others
+    /// may read, is refused naming the file's mode and adding that the setup
+    /// commands run with the admin connector's group as their effective
+    /// group.
+    #[test]
+    fn a_setup_command_refused_its_config_names_the_group_it_runs_under() {
+        let dir = crate::test_dir::tempdir().unwrap();
+        let config = dir.path().join("admin-con.toml");
+        std::fs::write(&config, "plane = \"admin\"\n").unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let why = setup_link(&config).err().expect("refused");
+        assert!(why.contains("has mode 0644"), "{why}");
+        assert!(why.ends_with(SETUP_GROUP), "{why}");
+        assert!(
+            why.contains("run with the admin connector's group"),
+            "{why}"
+        );
     }
 }

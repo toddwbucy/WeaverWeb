@@ -342,8 +342,9 @@ async fn rotate_the_authority(
     }
 }
 
-/// The client config a connector reads, one per plane: its own key and
-/// certificate, the server's certificate, the server's link address and
+/// The client config a connector reads, one per plane: its own
+/// certificate (its key is a file of its own, which `key_file` names once
+/// the install lays it), the server's certificate, the server's link address and
 /// the name it is verified under, the agent's name, its row's identity,
 /// and the plane.
 pub(crate) fn client_config(
@@ -382,10 +383,10 @@ pub(crate) fn client_config(
         "certificate".into(),
         credential.certificate_pem.clone().into(),
     );
-    table.insert("key".into(), credential.key_pem.clone().into());
     format!(
-        "# Written by `weaver-web register` on {}. Carries this connector's key:\n\
-         # keep it on the agent's box and never in a repository.\n{}{}",
+        "# Written by `weaver-web register` on {}. This connector's key is a file of its\n\
+         # own, handed over beside this config: keep it on the agent's box and never in a\n\
+         # repository.\n{}{}",
         chrono::Utc::now().format("%Y-%m-%d"),
         toml::to_string(&table).expect("a table of strings serializes"),
         box_facts(plane)
@@ -400,13 +401,13 @@ fn box_facts(plane: Plane) -> &'static str {
     match plane {
         Plane::Gate => {
             "\n# The box's facts, added on the box by the install:\n\
+             # key_file = \"<this connector's key file, absolute>\"\n\
              # gate_socket = \"<the agent's gate socket>\"\n"
         }
         Plane::Admin => {
             "\n# The box's facts, added on the box by the install:\n\
-             # trace_socket = \"<the agent's trace relay socket>\"\n\
-             # weaver_admin = \"<weaver-admin's absolute path, as the box's rule names it>\"\n\
-             # admin_log = \"<the agent's admin.log, absolute>\"\n\
+             # key_file = \"<this connector's key file, absolute>\"\n\
+             # admin_socket = \"<the weaver-admin service's socket, absolute>\"\n\
              # verb_bound_secs = 960    # past the box's load bound\n\
              # stop_grace_secs = 1080   # the load bound, the unload bound and a margin\n"
         }
@@ -436,7 +437,20 @@ pub(super) struct ConfigDir {
 
 const GATE_CONFIG: &str = "gate-con.toml";
 const ADMIN_CONFIG: &str = "admin-con.toml";
+// **Each connector's key is a file of its own** (the brief of 2026-11-27,
+// child 6), beside its config.
+const GATE_KEY: &str = "gate-con.key";
+const ADMIN_KEY: &str = "admin-con.key";
+/// The four files a pair is, in the order they are staged and published:
+/// **each plane's key before its config**, so a failure between two renames
+/// never leaves a config standing without the key it names, nor, on a
+/// rotation, a new certificate beside the old key.
+const ENTRIES: [&str; 4] = [GATE_KEY, GATE_CONFIG, ADMIN_KEY, ADMIN_CONFIG];
 const STAGING: &str = ".staging";
+
+fn staging(entry: &str) -> String {
+    format!("{entry}{STAGING}")
+}
 
 /// The `*at` calls the config directory is used through.
 mod at {
@@ -770,29 +784,37 @@ fn stage_file(dir: &ConfigDir, entry: &str, content: &str) -> anyhow::Result<(u6
     })
 }
 
-/// The two configs staged under the agent's directory and not yet in
-/// place: the authority's staging-then-publish shape reused. The store
-/// commits between the staging and the publish, so a store failure
-/// discards the staged files and a publish failure says exactly which file
-/// stands where. Every step is relative to the directory's descriptor, and
-/// **the publish renames the inode it staged**: the entry is read without
-/// following immediately before each rename and refused where its device
-/// and inode are not the staged file's, a tripwire behind the directory
-/// check for an entry swapped in between the staging and the publish.
+/// The four files of a pair staged under the agent's directory and not
+/// yet in place, each connector's config and its key: the authority's
+/// staging-then-publish shape reused. The store commits between the staging
+/// and the publish, so a store failure discards the staged files and a
+/// publish failure says exactly which file stands where. Every step is
+/// relative to the directory's descriptor, and **the publish renames the
+/// inode it staged**: the entry is read without following immediately
+/// before each rename and refused where its device and inode are not the
+/// staged file's, a tripwire behind the directory check for an entry
+/// swapped in between the staging and the publish.
 pub(super) struct Staged {
     dir: ConfigDir,
     /// The gate config's staging path and final path, for the answers.
     gate: (PathBuf, PathBuf),
     admin: (PathBuf, PathBuf),
-    /// The device and inode of each staged file.
-    gate_identity: (u64, u64),
-    admin_identity: (u64, u64),
+    /// The device and inode of each staged file, in `ENTRIES`' order.
+    identities: [(u64, u64); 4],
+}
+
+/// Where a published pair stands: the two configs and the two keys.
+#[derive(Debug)]
+pub(super) struct Published {
+    pub(super) configs: [String; 2],
+    pub(super) keys: [String; 2],
 }
 
 impl Staged {
     pub(super) fn discard(&self) {
-        let _ = at::unlink(&self.dir.fd, &format!("{GATE_CONFIG}{STAGING}"));
-        let _ = at::unlink(&self.dir.fd, &format!("{ADMIN_CONFIG}{STAGING}"));
+        for entry in ENTRIES {
+            let _ = at::unlink(&self.dir.fd, &staging(entry));
+        }
     }
 
     /// The entry at the staging name is still the file staged.
@@ -812,49 +834,54 @@ impl Staged {
         Ok(())
     }
 
-    /// Rename both into place, replacing an existing config only for a
-    /// rotation of the agent's own.
-    pub(super) fn publish(self, replace: bool) -> anyhow::Result<(String, String)> {
-        let gate_staging = format!("{GATE_CONFIG}{STAGING}");
-        let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
-        self.still_staged(&gate_staging, self.gate_identity)
-            .map_err(|e| {
+    /// Rename the four into place, replacing an existing file only for a
+    /// rotation of the agent's own. A failure names what stands published
+    /// and what stands staged.
+    pub(super) fn publish(self, replace: bool) -> anyhow::Result<Published> {
+        let standing = |done: usize| {
+            let published: Vec<String> = ENTRIES[..done]
+                .iter()
+                .map(|e| self.dir.path(e).display().to_string())
+                .collect();
+            let staged: Vec<String> = ENTRIES[done..]
+                .iter()
+                .map(|e| self.dir.path(&staging(e)).display().to_string())
+                .collect();
+            format!(
+                "published: [{}]; staged: [{}]",
+                published.join(", "),
+                staged.join(", ")
+            )
+        };
+        for (i, entry) in ENTRIES.iter().enumerate() {
+            let from = staging(entry);
+            self.still_staged(&from, self.identities[i])
+                .map_err(|e| anyhow::anyhow!("{e}; {}", standing(i)))?;
+            at::rename(&self.dir.fd, &from, entry, replace).map_err(|e| {
                 anyhow::anyhow!(
-                    "{e}; the admin config stands staged at {}",
-                    self.admin.0.display()
+                    "{} could not be renamed to {}: {e}; {}",
+                    self.dir.path(&from).display(),
+                    self.dir.path(entry).display(),
+                    standing(i)
                 )
             })?;
-        at::rename(&self.dir.fd, &gate_staging, GATE_CONFIG, replace).map_err(|e| {
-            anyhow::anyhow!(
-                "the gate config stands staged at {} and could not be renamed to {}: {e}; the admin config stands staged at {}",
-                self.gate.0.display(),
-                self.gate.1.display(),
-                self.admin.0.display()
-            )
-        })?;
-        self.still_staged(&admin_staging, self.admin_identity)
-            .map_err(|e| {
-                anyhow::anyhow!("the gate config stands at {}; {e}", self.gate.1.display())
-            })?;
-        at::rename(&self.dir.fd, &admin_staging, ADMIN_CONFIG, replace).map_err(|e| {
-            anyhow::anyhow!(
-                "the gate config stands at {}; the admin config stands staged at {} and could not be renamed to {}: {e}",
-                self.gate.1.display(),
-                self.admin.0.display(),
-                self.admin.1.display()
-            )
-        })?;
+        }
         at::fsync(&self.dir.fd).map_err(|e| {
             anyhow::anyhow!(
-                "the gate config stands at {} and the admin config at {}, but syncing the directory failed: {e}; the names may not survive a power loss until it is synced",
-                self.gate.1.display(),
-                self.admin.1.display()
+                "{}, but syncing the directory failed: {e}; the names may not survive a power loss until it is synced",
+                standing(ENTRIES.len())
             )
         })?;
-        Ok((
-            self.gate.1.display().to_string(),
-            self.admin.1.display().to_string(),
-        ))
+        Ok(Published {
+            configs: [
+                self.gate.1.display().to_string(),
+                self.admin.1.display().to_string(),
+            ],
+            keys: [
+                self.dir.path(GATE_KEY).display().to_string(),
+                self.dir.path(ADMIN_KEY).display().to_string(),
+            ],
+        })
     }
 }
 
@@ -878,9 +905,9 @@ pub(super) enum Retained {
     /// A staged pair the register carries, live, for the row named: the
     /// commit an earlier run's lost answer hid, to publish now.
     Publish(Box<Agent>, String, String),
-    /// A staged pair this run discards before minting its own, and why: half
-    /// a pair from a run that crashed between its creates, or a pair whose
-    /// commit never landed. The discard is a mutation, so it runs after the
+    /// A staged pair this run discards before minting its own, and why: part
+    /// of a pair from a run that stopped between its creates or partway
+    /// through its publish, or a pair whose commit never landed. The discard is a mutation, so it runs after the
     /// verb's first record (`discard_staged`).
     Discard(&'static str),
 }
@@ -893,8 +920,10 @@ pub(super) enum Retained {
 /// register is asked whether the row for this box and name carries both,
 /// live: where it does, the pair is the one that commit made live and is
 /// published; where it does not, the commit never landed and the pair is
-/// discarded for a fresh one. Half a pair is a run that crashed between
-/// its two creates, which reached no store; it is discarded. A staged file
+/// discarded for a fresh one. Part of a pair is a run that stopped between
+/// its creates, which reached no store, or partway through its publish,
+/// whose published files a register then refuses to overwrite; it is
+/// discarded. A staged file
 /// that is not a config refuses, since it is not this server's. **This
 /// reads and decides, and changes nothing**: a verb inspects before its
 /// first record, and the discard it may decide runs after.
@@ -907,8 +936,8 @@ async fn inspect_retained(
     let Some(dir) = dir else {
         return Ok(Retained::None);
     };
-    let gate_staging = format!("{GATE_CONFIG}{STAGING}");
-    let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
+    let gate_staging = staging(GATE_CONFIG);
+    let admin_staging = staging(ADMIN_CONFIG);
     let kind = |entry: &str| -> anyhow::Result<bool> {
         match at::regular(&dir.fd, entry)
             .map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.path(entry).display()))?
@@ -921,13 +950,16 @@ async fn inspect_retained(
             None => Ok(false),
         }
     };
-    let (gate_there, admin_there) = (kind(&gate_staging)?, kind(&admin_staging)?);
-    if !gate_there && !admin_there {
+    let mut there = [false; 4];
+    for (i, entry) in ENTRIES.iter().enumerate() {
+        there[i] = kind(&staging(entry))?;
+    }
+    if there.iter().all(|t| !t) {
         return Ok(Retained::None);
     }
-    if gate_there != admin_there {
+    if !there.iter().all(|t| *t) {
         return Ok(Retained::Discard(
-            "half a staged pair, from a run that crashed between its creates",
+            "part of a staged pair, from a run that stopped between its creates or partway through its publish",
         ));
     }
     let read = |entry: &str| -> anyhow::Result<String> {
@@ -962,24 +994,23 @@ async fn inspect_retained(
 /// record: both staging entries unlinked, so this run stages its own.
 fn discard_staged(dir: &ConfigDir, why: &str) {
     tracing::warn!("{why} under {}; discarded", dir.display.display());
-    let _ = at::unlink(&dir.fd, &format!("{GATE_CONFIG}{STAGING}"));
-    let _ = at::unlink(&dir.fd, &format!("{ADMIN_CONFIG}{STAGING}"));
+    for entry in ENTRIES {
+        let _ = at::unlink(&dir.fd, &staging(entry));
+    }
 }
 
 /// The retained pair under the directory, as a `Staged` to publish.
 fn adopt(dir: ConfigDir) -> anyhow::Result<Staged> {
-    let gate_staging = format!("{GATE_CONFIG}{STAGING}");
-    let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
-    let identity = |entry: &str| {
-        at::identity_at(&dir.fd, entry)
-            .map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.path(entry).display()))
-    };
-    let (gate_identity, admin_identity) = (identity(&gate_staging)?, identity(&admin_staging)?);
+    let mut identities = [(0, 0); 4];
+    for (i, entry) in ENTRIES.iter().enumerate() {
+        let entry = staging(entry);
+        identities[i] = at::identity_at(&dir.fd, &entry)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.path(&entry).display()))?;
+    }
     Ok(Staged {
-        gate: (dir.path(&gate_staging), dir.path(GATE_CONFIG)),
-        admin: (dir.path(&admin_staging), dir.path(ADMIN_CONFIG)),
-        gate_identity,
-        admin_identity,
+        gate: (dir.path(&staging(GATE_CONFIG)), dir.path(GATE_CONFIG)),
+        admin: (dir.path(&staging(ADMIN_CONFIG)), dir.path(ADMIN_CONFIG)),
+        identities,
         dir,
     })
 }
@@ -1011,7 +1042,7 @@ async fn publish_retained(
         );
     }
     match staged.publish(replace) {
-        Ok((gate_path, admin_path)) => Answer {
+        Ok(published) => Answer {
             value: json!({
                 "verb": verb,
                 "ok": true,
@@ -1020,7 +1051,8 @@ async fn publish_retained(
                 "name": row.name,
                 "gate_fingerprint": gate_fp,
                 "admin_fingerprint": admin_fp,
-                "configs": [gate_path, admin_path],
+                "configs": published.configs,
+                "keys": published.keys,
                 "retired": [],
                 "note": "a pair staged by an earlier run whose answer was lost stands in the register; published now",
             }),
@@ -1049,40 +1081,41 @@ pub(super) fn stage_pair(
     gate: &ClientCredential,
     admin: &ClientCredential,
 ) -> anyhow::Result<Staged> {
-    let gate_staging = format!("{GATE_CONFIG}{STAGING}");
-    let admin_staging = format!("{ADMIN_CONFIG}{STAGING}");
-    let gate_identity = stage_file(
-        &dir,
-        &gate_staging,
-        &client_config(cfg, authority, agent_id, name, Plane::Gate, gate),
-    )?;
-    // A failure staging the second leaves no minted key behind in the
-    // first.
-    let admin_identity = match stage_file(
-        &dir,
-        &admin_staging,
-        &client_config(cfg, authority, agent_id, name, Plane::Admin, admin),
-    ) {
-        Ok(identity) => identity,
-        Err(e) => {
-            let _ = at::unlink(&dir.fd, &gate_staging);
-            return Err(e);
+    // In `ENTRIES`' order.
+    let contents = [
+        gate.key_pem.clone(),
+        client_config(cfg, authority, agent_id, name, Plane::Gate, gate),
+        admin.key_pem.clone(),
+        client_config(cfg, authority, agent_id, name, Plane::Admin, admin),
+    ];
+    let mut identities = [(0, 0); 4];
+    for (i, entry) in ENTRIES.iter().enumerate() {
+        match stage_file(&dir, &staging(entry), &contents[i]) {
+            Ok(identity) => identities[i] = identity,
+            // A failure staging one leaves no minted key behind in those
+            // staged before it.
+            Err(e) => {
+                for earlier in &ENTRIES[..i] {
+                    let _ = at::unlink(&dir.fd, &staging(earlier));
+                }
+                return Err(e);
+            }
         }
-    };
+    }
     // The files are synced; the directory holding their names is synced
     // too, before the store commits against them, and again after the
     // publish's renames, since a name is the directory's write and a
     // power loss after the commit would otherwise lose it.
     if let Err(e) = at::fsync(&dir.fd) {
-        let _ = at::unlink(&dir.fd, &gate_staging);
-        let _ = at::unlink(&dir.fd, &admin_staging);
+        for entry in ENTRIES {
+            let _ = at::unlink(&dir.fd, &staging(entry));
+        }
         anyhow::bail!("syncing {}: {e}", dir.display.display());
     }
     Ok(Staged {
-        gate: (dir.path(&gate_staging), dir.path(GATE_CONFIG)),
-        admin: (dir.path(&admin_staging), dir.path(ADMIN_CONFIG)),
-        gate_identity,
-        admin_identity,
+        gate: (dir.path(&staging(GATE_CONFIG)), dir.path(GATE_CONFIG)),
+        admin: (dir.path(&staging(ADMIN_CONFIG)), dir.path(ADMIN_CONFIG)),
+        identities,
         dir,
     })
 }
@@ -1199,14 +1232,14 @@ pub async fn register(
         Err(e) => return refused("register", format!("{e:#}")),
     };
     if let Some(dir) = &existing {
-        for entry in [GATE_CONFIG, ADMIN_CONFIG] {
+        for entry in ENTRIES {
             match dir.has(entry) {
                 Ok(false) => {}
                 Ok(true) => {
                     return refused(
                         "register",
                         format!(
-                            "{} already exists and register does not overwrite a config; move it aside, or rotate the agent",
+                            "{} already exists and register does not overwrite a config or a key; move it aside, or rotate the agent",
                             dir.path(entry).display()
                         ),
                     );
@@ -1317,7 +1350,7 @@ pub async fn register(
             );
         }
         match staged.publish(false) {
-            Ok((gate_path, admin_path)) => Answer {
+            Ok(published) => Answer {
                 value: json!({
                     "verb": "register",
                     "ok": true,
@@ -1326,7 +1359,8 @@ pub async fn register(
                     "name": name,
                     "gate_fingerprint": gate.fingerprint,
                     "admin_fingerprint": admin.fingerprint,
-                    "configs": [gate_path, admin_path],
+                    "configs": published.configs,
+                "keys": published.keys,
                     "retired": retired,
                     "note": note,
                 }),
@@ -1535,14 +1569,15 @@ pub async fn rotate(
             );
         }
         match staged.publish(true) {
-            Ok((gate_path, admin_path)) => Answer {
+            Ok(published) => Answer {
                 value: json!({
                     "verb": "rotate",
                     "ok": true,
                     "agent": agent.agent_id.as_str(),
                     "gate_fingerprint": gate.fingerprint,
                     "admin_fingerprint": admin.fingerprint,
-                    "configs": [gate_path, admin_path],
+                    "configs": published.configs,
+                "keys": published.keys,
                     "retired": retired,
                     "note": note,
                 }),

@@ -12,11 +12,12 @@
 //! invocation.
 //!
 //! **There is no privileged code here.** The verbs reach admin behind the
-//! [`Invoker`] trait, whose service implementation is the sudo invoker of
-//! `link::sudo_invoker`, the one privileged invocation in this crate. This
-//! module owns the order around it: the process-wide invocation slot, the
-//! verb bound, and the orderly stop, which invokes nothing (Spec 7.2, 8,
-//! 2.14). No file is
+//! [`Invoker`] trait, whose service implementation is
+//! `link::service_invoker`, the client of the weaver-admin service's
+//! socket, which runs the fixed lines itself and reads the grant on every
+//! verb (`weaver-admin-operator-contract` section 8). This module owns the
+//! order around it: the process-wide invocation slot, the verb bound, and
+//! the orderly stop, which invokes nothing (Spec 7.2, 8, 2.14). No file is
 //! read: the record reaches admin-con through the relay alone.
 //!
 //! **One task owns the door and the connection's outbound stream**, so
@@ -35,13 +36,14 @@ use crate::link::frames::{
     capability,
 };
 use crate::link::relay::{self, Dial, Read};
+use crate::link::service_invoker;
 use crate::traceview::{TraceEvent, parse_line};
 use futures::StreamExt;
 use serde::Deserialize;
 use std::collections::{BTreeSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -93,9 +95,12 @@ pub const STOP_GRACE: Duration = Duration::from_secs(1080);
 
 /// **The verb plane's one reach to admin** (Spec 7.2, 8): `grants` answers
 /// which verbs the box grants admin-con on this agent, and `run` invokes
-/// one. The one privileged implementation is
-/// [`crate::link::sudo_invoker::SudoInvoker`].
+/// one. The service's implementation is
+/// [`crate::link::service_invoker::ServiceInvoker`].
 pub trait Invoker: Send + Sync + 'static {
+    /// The connector's entries, handed over once at the start, where an
+    /// invoker raises its own failures (Spec 2.14). Most keep none.
+    fn attach(&self, _entries: &Entries) {}
     /// The verbs the box grants on this agent, read-only: the ceiling.
     fn grants(&self) -> impl Future<Output = anyhow::Result<Vec<String>>> + Send;
     /// Run one verb on this agent for a principal, answering admin's object
@@ -142,31 +147,22 @@ impl Invoker for NoVerbs {
 // ---------- the config ----------
 
 /// admin-con's config: what `weaver-web register` wrote, plus the box facts
-/// filled at install with no default (the trace relay's socket and the
-/// absolute path of `weaver-admin` the box's sudo rule names), the backfill
+/// filled at install with no default (the weaver-admin service's socket,
+/// once an agent is laid), the backfill
 /// bound for the first connection after a server restart, and the verb's
 /// bound and the stop's grace (Spec 7.2, 8).
 #[derive(Debug, Clone, Deserialize)]
 pub struct AdminConConfig {
     #[serde(flatten)]
     pub link: LinkConfig,
-    /// The trace relay's socket, absolute: the door the agent's start step
-    /// opens for admin-con's user alone (Spec 7.2). **Absent with no agent
-    /// laid**: the door reads closed for that reason and no relay is dialed.
+    /// **The weaver-admin service's socket, absolute** (Spec 7.2;
+    /// `weaver-admin-operator-contract` section 8): where admin-con asks
+    /// the grants and a verb, and opens the trace and the admin log.
+    /// **Absent with no agent laid**: the ceiling is empty, nothing is
+    /// asked, the door reads closed for that reason, and no admin log is
+    /// read.
     #[serde(default)]
-    pub trace_socket: Option<PathBuf>,
-    /// The absolute path of `weaver-admin` the box's sudo rule names, the
-    /// one config value in a privileged command line beside the agent's
-    /// name (Spec 7.2). **Absent with no agent laid**: the ceiling is empty
-    /// and no `sudo` runs.
-    #[serde(default)]
-    pub weaver_admin: Option<PathBuf>,
-    /// **The agent's `admin.log`, absolute** (Spec 2.14, 8): a box fact
-    /// with no default, read line by line from admin-con's start and sent
-    /// upstream as entries (`link::admin_log`). **Absent with no agent
-    /// laid**: nothing is read and no entry is raised.
-    #[serde(default)]
-    pub admin_log: Option<PathBuf>,
+    pub admin_socket: Option<PathBuf>,
     /// How much of the file's tail is relayed after a server restart, and
     /// how much of what an opening read it holds to replay without reading
     /// again.
@@ -239,6 +235,24 @@ fn default_drain_bound() -> Duration {
     DRAIN_BOUND
 }
 
+/// **Members an older admin-con read, now refused by name** (Spec 7.2):
+/// a config naming one was laid for the sudo invoker, and starting on it
+/// would leave admin-con silently unlaid.
+const RETIRED: &[(&str, &str)] = &[
+    (
+        "weaver_admin",
+        "weaver_admin is retired; admin-con asks the service at admin_socket",
+    ),
+    (
+        "trace_socket",
+        "trace_socket is retired; admin-con reads the trace through the service at admin_socket",
+    ),
+    (
+        "admin_log",
+        "admin_log is retired; admin-con reads the admin log through the service at admin_socket",
+    ),
+];
+
 /// The members an admin-con config may carry: the only names a parse error
 /// may print.
 const MEMBERS: &[&str] = &[
@@ -249,25 +263,41 @@ const MEMBERS: &[&str] = &[
     "plane",
     "server_certificate",
     "certificate",
-    "key",
+    "key_file",
     "local_address",
-    "trace_socket",
-    "weaver_admin",
-    "admin_log",
+    "admin_socket",
     "backfill_bytes",
     "verb_bound_secs",
     "stop_grace_secs",
 ];
 
 impl AdminConConfig {
-    /// Read the config under the trust rule of `client::read_private`, and
-    /// refuse one minted for the gate plane, one missing a member, a
-    /// backfill past `MAX_BACKFILL_BYTES`, or a `weaver_admin` or
-    /// `trace_socket` that is not absolute: the box's sudo rule names the
-    /// one absolutely, and the other is a box fact never resolved against
-    /// admin-con's working directory.
+    /// Read the config and its key under the connector's trust rule
+    /// (`client::read_trusted`, `client::Trust::connector`): the config by
+    /// `load_unkeyed`, then the key from `key_file` once the config has
+    /// passed (`LinkConfig::load_key`).
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let content = client::read_private(path)?;
+        let trust = client::Trust::connector();
+        let mut cfg = Self::load_unkeyed(path, &trust)?;
+        cfg.link.load_key(path, &trust)?;
+        Ok(cfg)
+    }
+
+    /// **The config alone, its key not read**: under `trust`, refusing one
+    /// naming a retired member, one minted for the gate plane, one missing
+    /// a member, a backfill past `MAX_BACKFILL_BYTES`, or a box fact that is
+    /// not absolute: a box fact is never resolved against admin-con's
+    /// working directory. The staging tool checks a composed config by it,
+    /// whose key is not yet laid at `key_file`.
+    pub fn load_unkeyed(path: &Path, trust: &client::Trust) -> anyhow::Result<Self> {
+        let content = client::read_trusted(path, client::Held::Config, trust)?;
+        if let Ok(table) = content.parse::<toml::Table>()
+            && let Some((_, why)) = RETIRED
+                .iter()
+                .find(|(member, _)| table.contains_key(*member))
+        {
+            anyhow::bail!("{}: {why}", path.display());
+        }
         let cfg: Self = client::parse_config(path, &content, MEMBERS)?;
         cfg.link
             .expect_plane(Plane::Admin)
@@ -279,53 +309,27 @@ impl AdminConConfig {
                 cfg.backfill_bytes
             );
         }
-        // **The three box facts stand together** (Spec 7.2): none is an
-        // appliance with no agent laid, all three a laid agent, and some
-        // and not all a half-done install, refused naming what is missing.
-        let facts = [
-            ("trace_socket", &cfg.trace_socket),
-            ("weaver_admin", &cfg.weaver_admin),
-            ("admin_log", &cfg.admin_log),
-        ];
-        let missing: Vec<&str> = facts
-            .iter()
-            .filter(|(_, fact)| fact.is_none())
-            .map(|(member, _)| *member)
-            .collect();
-        if !missing.is_empty() && missing.len() < facts.len() {
+        // **One box fact, `admin_socket`** (Spec 7.2): absent, no agent is
+        // laid; present, it is absolute, never resolved against admin-con's
+        // working directory.
+        if let Some(fact) = &cfg.admin_socket
+            && !fact.is_absolute()
+        {
             anyhow::bail!(
-                "{}: the box facts stand together, all three for a laid agent or none before one is laid, and {} {} missing",
+                "{}: admin_socket {} is not an absolute path",
                 path.display(),
-                missing.join(" and "),
-                if missing.len() == 1 { "is" } else { "are" }
+                fact.display()
             );
-        }
-        for (member, fact) in [
-            ("weaver_admin", &cfg.weaver_admin),
-            ("trace_socket", &cfg.trace_socket),
-            ("admin_log", &cfg.admin_log),
-        ] {
-            if let Some(fact) = fact
-                && !fact.is_absolute()
-            {
-                anyhow::bail!(
-                    "{}: {member} {} is not an absolute path",
-                    path.display(),
-                    fact.display()
-                );
-            }
         }
         Ok(cfg)
     }
 }
 
-/// **The box facts of a laid agent** (Spec 7.2), all three, which the
-/// config holds together or not at all.
+/// **The box fact of a laid agent** (Spec 7.2): the weaver-admin
+/// service's socket.
 #[derive(Debug, Clone, Copy)]
 pub struct Laid<'a> {
-    pub trace_socket: &'a Path,
-    pub weaver_admin: &'a Path,
-    pub admin_log: &'a Path,
+    pub admin_socket: &'a Path,
 }
 
 impl AdminConConfig {
@@ -334,28 +338,27 @@ impl AdminConConfig {
     /// each read (Spec 7.2).
     pub fn laid(&self) -> Option<Laid<'_>> {
         Some(Laid {
-            trace_socket: self.trace_socket.as_deref()?,
-            weaver_admin: self.weaver_admin.as_deref()?,
-            admin_log: self.admin_log.as_deref()?,
+            admin_socket: self.admin_socket.as_deref()?,
         })
     }
 }
 
-/// **The invoker a config chooses** (Spec 7.2): the sudo invoker of the
-/// laid agent's `weaver_admin`, or, with no agent laid, none, so the
-/// ceiling is empty and no `sudo` runs.
+/// **The invoker a config chooses** (Spec 7.2): the client of the laid
+/// agent's `admin_socket`, or, with no agent laid, none, so the ceiling is
+/// empty and nothing is asked.
 pub enum Invoking {
-    Sudo(crate::link::sudo_invoker::SudoInvoker),
+    Service(crate::link::service_invoker::ServiceInvoker),
     NoAgentLaid,
 }
 
 /// The invoker `cfg` chooses, read from `laid` alone.
 pub fn invoking(cfg: &AdminConConfig) -> anyhow::Result<Invoking> {
     Ok(match cfg.laid() {
-        Some(laid) => Invoking::Sudo(crate::link::sudo_invoker::SudoInvoker::new(
-            laid.weaver_admin,
+        Some(laid) => Invoking::Service(crate::link::service_invoker::ServiceInvoker::new(
+            laid.admin_socket,
             &cfg.link.agent,
-        )?),
+            cfg.verb_bound,
+        )),
         None => Invoking::NoAgentLaid,
     })
 }
@@ -370,7 +373,7 @@ pub async fn run_as_configured(
     status: &watch::Sender<LinkStatus>,
 ) -> anyhow::Result<()> {
     match invoking(&cfg)? {
-        Invoking::Sudo(invoker) => {
+        Invoking::Service(invoker) => {
             run(cfg, Arc::new(invoker), source, backoff, shutdown, status).await
         }
         Invoking::NoAgentLaid => {
@@ -382,16 +385,108 @@ pub async fn run_as_configured(
 // ---------- the door ----------
 
 /// **Why the door reads closed with no agent laid** (Spec 7.2).
-pub const NO_AGENT_LAID: &str = "no agent is laid: the config names no trace_socket";
+pub const NO_AGENT_LAID: &str = "no agent is laid: the config names no admin_socket";
 
-/// **The relay's dial, or the door closed with no agent laid** (Spec 7.2):
-/// the empty path stands for a config naming no `trace_socket`, and is
-/// never dialed.
-pub(crate) async fn dial_relay(socket: &Path, from: &Position) -> relay::Dial {
-    if socket.as_os_str().is_empty() {
+/// **A close before the header is confirmed only where this much of the
+/// deadline remains** (Spec 7.2; the brief's decision 5), and the second
+/// opening stops `CONFIRM_MARGIN` short of the deadline, so the caller's
+/// own deadline never cuts it; with less, the close is the refusal.
+const CONFIRM_ROOM: Duration = Duration::from_secs(2);
+const CONFIRM_MARGIN: Duration = Duration::from_secs(1);
+
+/// **Where the trace is opened** (Spec 7.2): the weaver-admin service's
+/// socket, the empty path with no agent laid, and the agent the opening
+/// names. A refusal of the opening by a word that says admin-con or its
+/// config is at fault raises a connector failure entry once per change of
+/// word, not at every retry on the backoff.
+#[derive(Clone)]
+pub(crate) struct Reach {
+    path: PathBuf,
+    agent: String,
+    entries: Option<Entries>,
+    /// The last word the service refused the trace opening with, cleared
+    /// at every opening the relay answered with a header (`Dial::Open`).
+    last: Arc<Mutex<Option<String>>>,
+}
+
+impl Reach {
+    pub(crate) fn new(path: PathBuf, agent: &str, entries: Option<Entries>) -> Self {
+        Self {
+            path,
+            agent: agent.to_owned(),
+            entries,
+            last: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn dial(&self, from: &Position) -> relay::Dial {
+        let dialed = relay::dial(&self.path, &self.agent, from).await;
+        match &dialed {
+            Dial::Open(_) => *self.last.lock().unwrap() = None,
+            Dial::Shut { word, why } => {
+                let changed =
+                    self.last.lock().unwrap().replace(word.clone()).as_ref() != Some(word);
+                if changed && service_invoker::is_defect(word) {
+                    tracing::error!("{why}");
+                    if let Some(entries) = &self.entries {
+                        let (kind, why) = service_invoker::service_failure(word, why.clone());
+                        entries.failure(&kind, why);
+                    }
+                }
+            }
+            _ => {}
+        }
+        dialed
+    }
+}
+
+/// **The trace's opening, or the door closed with no agent laid** (Spec
+/// 7.2): the empty path stands for a config naming no `admin_socket`, and
+/// is never dialed. **A close before the header is confirmed once** by a
+/// second opening at the same position, where `until` leaves
+/// `CONFIRM_ROOM` (always, with none): a relay whose window passed admits
+/// the second, a relay that died refuses it `relay_unreachable`, and a
+/// second close is read as the refusal of the position, which is not proof
+/// (`weaver-admin-operator-contract` section 8.5). **A second opening with
+/// no header by `CONFIRM_MARGIN` short of the deadline is a closed door**,
+/// as a first opening past its deadline is: a timeout is not a close, and
+/// it comes just when a late request is the likely cause, so no mark is
+/// placed and the position is kept.
+pub(crate) async fn dial_relay(
+    reach: &Reach,
+    from: &Position,
+    until: Option<tokio::time::Instant>,
+) -> relay::Dial {
+    if reach.path.as_os_str().is_empty() {
         return relay::Dial::Closed(NO_AGENT_LAID.to_owned());
     }
-    relay::dial(socket, from).await
+    let first = reach.dial(from).await;
+    if !matches!(first, Dial::Refused) {
+        return first;
+    }
+    let second = match until {
+        None => reach.dial(from).await,
+        Some(until)
+            if until.saturating_duration_since(tokio::time::Instant::now()) >= CONFIRM_ROOM =>
+        {
+            tokio::time::timeout_at(until - CONFIRM_MARGIN, reach.dial(from))
+                .await
+                .unwrap_or_else(|_| {
+                    Dial::Closed(format!(
+                        "the trace closed before its header at offset {}, and a second opening had no header within the deadline: the door is closed and the position kept",
+                        from.offset
+                    ))
+                })
+        }
+        Some(_) => return Dial::Refused,
+    };
+    if matches!(second, Dial::Open(_)) {
+        tracing::info!(
+            "the trace closed before its header at offset {}, and a second opening was admitted: the request had reached the relay after its window",
+            from.offset
+        );
+    }
+    second
 }
 
 /// What the door hands the connection.
@@ -553,7 +648,7 @@ struct Opened {
 /// order, so the row converges to the trace's tail and the opening's `show`
 /// re-establishes it.
 async fn measure(
-    socket: &Path,
+    socket: &Reach,
     from: &Position,
     cap: u64,
     bound: Duration,
@@ -566,7 +661,7 @@ async fn measure(
     let mut marks = Vec::new();
     let dial = async |from: &Position, marks: &mut Vec<Item>| match tokio::time::timeout_at(
         until,
-        connect(socket, from, marks),
+        connect(socket, from, until, marks),
     )
     .await
     {
@@ -665,13 +760,14 @@ async fn measure(
 /// serves another file than `from` names, **each marked** at offset zero of
 /// the file now served: the stream and its start.
 async fn connect(
-    socket: &Path,
+    socket: &Reach,
     from: &Position,
+    until: tokio::time::Instant,
     marks: &mut Vec<Item>,
 ) -> Result<(relay::Stream, Position), String> {
     let mut at = from.clone();
     loop {
-        match dial_relay(socket, &at).await {
+        match dial_relay(socket, &at, Some(until)).await {
             // **Another file than the position names is a replacement at
             // any offset**, zero included: only the empty generation, the
             // position before any header was read, names no file. A request
@@ -712,7 +808,7 @@ async fn connect(
             Dial::Refused => {
                 return Err("the trace relay refused a request from offset zero".into());
             }
-            Dial::Closed(why) => return Err(why),
+            Dial::Closed(why) | Dial::Shut { why, .. } => return Err(why),
         }
     }
 }
@@ -747,7 +843,7 @@ fn progress(shared: &mut Shared, opened: &Opened) {
 /// the boundary and the opening's `show` re-establishes the row. Anything
 /// else fails the opening, the door left closed on the backoff. Every other
 /// position is planned as it stands.
-async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<Resume, String> {
+async fn verify(socket: &Reach, opened: &mut Opened, resume: &Resume) -> Result<Resume, String> {
     let acked = match resume {
         // An opening whose read already marked a discontinuity replays from
         // zero of its file, per `begin`, and verifies nothing here.
@@ -763,7 +859,7 @@ async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<R
     // **The verification dial gets only what remains of the opening's one
     // deadline**: where nothing remains it fails at once, a closed door on
     // the backoff, as a dial past the deadline does.
-    match tokio::time::timeout_at(opened.until, dial_relay(socket, acked)).await {
+    match tokio::time::timeout_at(opened.until, dial_relay(socket, acked, Some(opened.until))).await {
         Ok(Dial::Open(stream)) if stream.identity == opened.boundary.generation => {
             opened.resumed = Some(*stream);
             Ok(resume.clone())
@@ -782,7 +878,7 @@ async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<R
             });
             Ok(Resume::Backfill)
         }
-        Ok(Dial::Closed(why)) => Err(why),
+        Ok(Dial::Closed(why) | Dial::Shut { why, .. }) => Err(why),
         Err(_) => Err(
             "the trace relay gave no header at the acknowledged position within the opening's bound"
                 .to_owned(),
@@ -912,7 +1008,7 @@ struct Step {
 /// relay that dropped admin-con while it was not reading, during a verb,
 /// costs nothing: the position is verified and the stream resumes.
 struct Door {
-    socket: PathBuf,
+    socket: Reach,
     backoff: Backoff,
     open: bool,
     /// The stream, while the door is open; none with the door open is a
@@ -943,7 +1039,7 @@ struct Door {
 }
 
 impl Door {
-    fn closed(socket: PathBuf, backoff: Backoff, at: Position, entries: Entries) -> Self {
+    fn closed(socket: Reach, backoff: Backoff, at: Position, entries: Entries) -> Self {
         Self {
             entries,
             socket,
@@ -1190,7 +1286,7 @@ impl Door {
     /// its start; and a relay that serves another file, or none, closed
     /// the door, so the next opening is an admission of the trace.
     async fn redial(&mut self, step: &mut Step) {
-        match dial_relay(&self.socket, &self.at).await {
+        match dial_relay(&self.socket, &self.at, None).await {
             Dial::Open(stream) if stream.identity == self.at.generation => {
                 self.stream = Some(*stream);
                 self.fresh = true;
@@ -1230,7 +1326,7 @@ impl Door {
                 self.close(false);
                 step.closed = true;
             }
-            Dial::Closed(why) => {
+            Dial::Closed(why) | Dial::Shut { why, .. } => {
                 tracing::info!("the trace door closed: {why}");
                 self.close(false);
                 step.closed = true;
@@ -1396,31 +1492,36 @@ pub async fn run<I: Invoker>(
     let serve_shutdown = shutdown.clone();
     let slot = Arc::new(Slot::new());
     // **The connector's entries** (Spec 2.14): its own failures, and the
-    // box's admin.log read on a thread of its own, sent upstream by the
-    // connection's pump.
+    // box's admin.log read through the service by a task of its own, sent
+    // upstream by the connection's pump.
     let entries = Entries::new("admin-con");
-    // **No `admin_log`, nothing read** (Spec 7.2): with no agent laid the
-    // file does not exist yet, and its absence is no failure.
+    invoker.attach(&entries);
+    // **No agent laid, no admin log read** (Spec 7.2): the log does not
+    // exist yet, and its absence is no failure.
     let laid = cfg.laid();
-    let _tail = laid.map(|laid| {
-        admin_log::tail(
-            laid.admin_log.to_owned(),
+    let _log = laid.map(|laid| {
+        admin_log::follow(
+            laid.admin_socket.to_owned(),
+            cfg.link.agent.clone(),
             entries.clone(),
-            admin_log::my_uid(),
+            admin_log::BACKOFF,
             shutdown.clone(),
         )
     });
-    // **No `trace_socket`, no relay dialed** (Spec 7.2): the empty path
+    // **No `admin_socket`, no trace opened** (Spec 7.2): the empty path
     // stands for none, and `dial_relay` answers it closed for the reason
     // that no agent is laid without dialing.
-    let trace_socket = laid
-        .map(|laid| laid.trace_socket.to_owned())
-        .unwrap_or_default();
+    let reach = Reach::new(
+        laid.map(|laid| laid.admin_socket.to_owned())
+            .unwrap_or_default(),
+        &cfg.link.agent,
+        Some(entries.clone()),
+    );
     let hello_entries = entries.clone();
     let opts = ServeOptions {
         entries: entries.clone(),
         agent: cfg.link.agent.clone(),
-        socket: trace_socket.clone(),
+        socket: reach.clone(),
         backoff,
         backfill: cfg.backfill_bytes,
         boundary_bound: cfg.boundary_bound,
@@ -1430,7 +1531,7 @@ pub async fn run<I: Invoker>(
         slot: slot.clone(),
     };
     let grants_bound = cfg.grants_bound;
-    let socket = trace_socket;
+    let socket = reach;
     let backfill = cfg.backfill_bytes;
     let boundary_bound = cfg.boundary_bound;
     // The stop's grace runs from the moment the stop is asked, whatever
@@ -1544,11 +1645,11 @@ pub async fn run<I: Invoker>(
 /// exactly as it stands, whatever the ceiling grants. The link's half (asks
 /// still waiting answered `not_started`, the verb in flight's answer sent)
 /// is done by the time this runs; here the verb in flight, if any, is
-/// waited for within the stop's grace, so its process is reaped and its
-/// outcome logged before admin-con exits. **The child is never killed**:
-/// past the grace admin-con exits and the child, in its own session, runs
-/// on, its outcome recorded in the box's `admin.log`. To the server, this
-/// exit is lost contact, raised to the operator.
+/// waited for within the stop's grace, so its run's end is read and its
+/// outcome logged before admin-con exits. **admin-con never stops a run**:
+/// past the grace admin-con exits and the run goes on at the weaver-admin
+/// service, its outcome recorded in the box's `admin.log`. To the server,
+/// this exit is lost contact, raised to the operator.
 pub(super) async fn orderly_stop(slot: &Slot, agent: &str, deadline: tokio::time::Instant) {
     match tokio::time::timeout_at(deadline, slot.permit.clone().acquire_owned()).await {
         Ok(_) => tracing::info!(
@@ -1557,7 +1658,7 @@ pub(super) async fn orderly_stop(slot: &Slot, agent: &str, deadline: tokio::time
         Err(_) => {
             let running = slot.running.lock().unwrap().clone();
             tracing::warn!(
-                "{agent}: {} still runs at the end of the stop's grace; it runs on, never killed, its outcome in the box's admin.log",
+                "{agent}: {} still runs at the end of the stop's grace; it runs on at the service, its outcome in the box's admin.log",
                 running.as_deref().unwrap_or("a verb")
             );
         }
@@ -1569,7 +1670,7 @@ struct ServeOptions {
     entries: Entries,
     agent: String,
     /// The trace relay's socket.
-    socket: PathBuf,
+    socket: Reach,
     /// The door's redial, the connector's own backoff.
     backoff: Backoff,
     backfill: u64,
@@ -1581,7 +1682,7 @@ struct ServeOptions {
 }
 
 /// **admin-con's invocation slot, one per process** (Spec 7.2): held from
-/// an invocation's start until its process exits and is reaped, across
+/// an invocation's start while admin-con can read its run standing, across
 /// connection attempts, so a verb asked on a fresh connection while a
 /// timed-out one still runs queues behind it and never runs beside it. The
 /// box's own guard stands beside this one, weaver-admin's invocation lock;

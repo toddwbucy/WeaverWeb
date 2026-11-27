@@ -1,12 +1,12 @@
-//! conforms: web-no-privilege-outside-the-sudo-invoker
+//! conforms: web-no-privilege-in-the-repository
 //!
-//! **No privileged invocation in the repository outside admin-con's sudo
-//! invoker** (Spec 7.2, 8): nothing tracked runs a privilege-escalating
-//! program, calls the setuid family, sets a child's user or group, or sets
-//! a setuid or setgid mode bit. **The one exception is by name and by
-//! word**: the program admin-con runs may be named in the invoker's module
-//! and in its own test module, and nowhere else, and every other check
-//! holds in those two files as everywhere. The
+//! **No privileged invocation in the repository** (Spec 7.2, 8; the
+//! operator's rulings of 2026-11-26): nothing tracked runs a
+//! privilege-escalating program, calls the setuid family, sets a child's
+//! user or group, or sets a setuid or setgid mode bit. **There is no
+//! exception**: admin-con asks the weaver-admin service on the box's local
+//! socket and runs nothing itself, so the files that once held its
+//! invoker are scanned as every other. The
 //! scan reads every tracked file outside `docs/` (by `git ls-files` where
 //! the tree is a checkout, else by walking it past `.git/` and `target/`),
 //! never following a symlink, so a symlinked directory cannot pull a tree
@@ -21,9 +21,6 @@
 //! pattern lists name what it hunts.
 
 use std::path::{Path, PathBuf};
-
-/// The two files that may name the program admin-con's invoker runs.
-const SUDO_INVOKER: [&str; 2] = ["src/link/sudo_invoker.rs", "src/link/sudo_invoker_tests.rs"];
 
 /// The families a finding belongs to, so the self-test can plant one of each.
 const PROGRAM: &str = "a privilege-escalating program";
@@ -120,16 +117,9 @@ fn sets_mode_bit(line: &str) -> bool {
     literal || named || chmod
 }
 
-/// The family a code line's privileged invocation belongs to, if any,
-/// with the invoker's program allowed where `invoker` says the line is in
-/// one of its two files.
-fn family(line: &str, invoker: bool) -> Option<&'static str> {
-    let allowed = ["su", "do"].concat();
-    if programs()
-        .iter()
-        .filter(|p| !(invoker && **p == allowed))
-        .any(|p| words(line, p).next().is_some())
-    {
+/// The family a code line's privileged invocation belongs to, if any.
+fn family(line: &str) -> Option<&'static str> {
+    if programs().iter().any(|p| words(line, p).next().is_some()) {
         return Some(PROGRAM);
     }
     if calls().iter().any(|c| called(line, c)) {
@@ -218,7 +208,6 @@ fn walk(root: &Path, rel: &Path, out: &mut Vec<PathBuf>) {
 fn privileged_invocations(root: &Path) -> Vec<String> {
     let mut found = Vec::new();
     for rel in files(root) {
-        let invoker = SUDO_INVOKER.iter().any(|f| rel == Path::new(f));
         let bytes = std::fs::read(root.join(&rel)).unwrap();
         let text = String::from_utf8_lossy(&bytes);
         let markdown = rel.extension().is_some_and(|e| e == "md");
@@ -236,7 +225,7 @@ fn privileged_invocations(root: &Path) -> Vec<String> {
             } else if is_comment(&rel, code) {
                 continue;
             }
-            if let Some(family) = family(code, invoker) {
+            if let Some(family) = family(code) {
                 found.push(format!("{family}: {}:{}: {code}", rel.display(), i + 1));
             }
         }
@@ -254,20 +243,13 @@ fn the_repository_holds_no_privileged_invocation() {
         scanned.iter().any(|f| f.starts_with("src")),
         "the scan reached the source tree"
     );
-    for invoker in SUDO_INVOKER {
-        assert!(
-            scanned.iter().any(|f| f == Path::new(invoker)),
-            "the exception names a file the scan reads: {invoker}"
-        );
-    }
 }
 
 /// **The scan finds one of each family when it is planted**, in each file
 /// syntax it reads, and nothing in a comment, in Markdown prose, under
 /// `docs/`, or behind a symlinked directory: a watch that cannot fail is
-/// not a test. **The invoker's exception is its program's word in its two
-/// files alone**: the word passes there, every other family is still found
-/// there, and the word is found in a file of the same name elsewhere.
+/// not a test. **No file is excepted**: the program's word is found in the
+/// two files that once held admin-con's invoker, as anywhere else.
 #[test]
 fn a_planted_privileged_invocation_of_each_family_is_found() {
     let dir = tempfile::tempdir().unwrap();
@@ -363,7 +345,9 @@ fn a_planted_privileged_invocation_of_each_family_is_found() {
         (MODE, "src/mode.rs"),
         (PROGRAM, "install.sh"),
         (PROGRAM, "README.md"),
+        (PROGRAM, "src/link/sudo_invoker.rs"),
         (CALL, "src/link/sudo_invoker.rs"),
+        (PROGRAM, "src/link/sudo_invoker_tests.rs"),
         (CHILD_ID, "src/link/sudo_invoker_tests.rs"),
         (PROGRAM, "src/other/sudo_invoker.rs"),
     ]

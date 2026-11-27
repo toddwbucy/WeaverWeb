@@ -8,8 +8,14 @@
 use crate::link::admin_con::{
     AdminConConfig, DEFAULT_BACKFILL_BYTES, MAX_BACKFILL_BYTES, STOP_GRACE, VERB_BOUND,
 };
+use crate::link::authority::Authority;
+use crate::link::client::Trust;
+use crate::link::frames::Plane;
 use crate::link::gate_con::GateConConfig;
+use crate::link::key_config;
 use crate::stage::{self, MANIFEST_HEADER};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -20,10 +26,10 @@ fn euid() -> u32 {
 }
 
 /// A connector config shaped as `register` writes one (`verbs::client_config`):
-/// the flat link members, then the box facts as commented placeholders. The
-/// certificate and key members are invented text, not PEM, since loading a
-/// config reads them as strings and never parses them.
-fn handover(agent: &str, plane: &str) -> String {
+/// the flat link members, then the box facts as commented placeholders. Its
+/// certificate is a real one, minted by the rig's authority, since the
+/// staging tool checks it is over the key handed over beside it.
+fn handover(agent: &str, plane: &str, certificate: &str) -> String {
     let mut t = toml::Table::new();
     t.insert("server".into(), "server.invalid:1".into());
     t.insert("server_name".into(), "weaver-web".into());
@@ -34,10 +40,9 @@ fn handover(agent: &str, plane: &str) -> String {
         "server_certificate".into(),
         "invented, not a certificate".into(),
     );
-    t.insert("certificate".into(), "invented, not a certificate".into());
-    t.insert("key".into(), "invented, not a key".into());
+    t.insert("certificate".into(), certificate.into());
     format!(
-        "# Written by `weaver-web register` on 2026-11-11. Carries this connector's key:\n# keep it on the agent's box and never in a repository.\n{}\n# The box's facts, added on the box by the install:\n# gate_socket = \"<the agent's gate socket>\"\n",
+        "# Written by `weaver-web register` on 2026-11-11. This connector's key is a file of its\n# own, handed over beside this config.\n{}\n# The box's facts, added on the box by the install:\n# key_file = \"<this connector's key file, absolute>\"\n# gate_socket = \"<the agent's gate socket>\"\n",
         toml::to_string(&t).unwrap()
     )
 }
@@ -65,15 +70,24 @@ fn program(path: &Path) {
 }
 
 /// The temporary directory: three stand-in programs, `register`'s handover
-/// for two agents on one box, and a parameter file naming them.
+/// for two agents on one box (each plane's config and key), and a
+/// parameter file naming them.
 struct Rig {
     dir: tempfile::TempDir,
+    authority: Authority,
+    /// Each (agent, plane)'s certificate and key, as minted.
+    minted: RefCell<HashMap<(String, String), (String, String)>>,
 }
 
 impl Rig {
     fn new() -> Self {
         let dir = crate::test_dir::tempdir().unwrap();
-        let rig = Rig { dir };
+        let authority = Authority::init(&dir.path().join("authority"), "weaver-web", &[]).unwrap();
+        let rig = Rig {
+            dir,
+            authority,
+            minted: RefCell::new(HashMap::new()),
+        };
         std::fs::create_dir(rig.p("bin")).unwrap();
         for p in ["weaver-web", "gate-con", "admin-con"] {
             program(&rig.p(&format!("bin/{p}")));
@@ -85,10 +99,50 @@ impl Rig {
                 .recursive(true)
                 .create(&d)
                 .unwrap();
-            private_file(&d.join("gate-con.toml"), &handover(agent, "gate"));
-            private_file(&d.join("admin-con.toml"), &handover(agent, "admin"));
+            for plane in ["gate", "admin"] {
+                rig.lay(agent, plane, agent, plane);
+            }
         }
         rig
+    }
+
+    /// The credential minted for `agent` on `plane`, minted at first ask.
+    fn credential(&self, agent: &str, plane: &str) -> (String, String) {
+        self.minted
+            .borrow_mut()
+            .entry((agent.to_owned(), plane.to_owned()))
+            .or_insert_with(|| {
+                let p = if plane == "gate" {
+                    Plane::Gate
+                } else {
+                    Plane::Admin
+                };
+                let c = self.authority.mint_client(agent, p).unwrap();
+                (c.certificate_pem, c.key_pem)
+            })
+            .clone()
+    }
+
+    /// The handover config for `agent` on `plane`, as `register` wrote it.
+    fn handover(&self, agent: &str, plane: &str) -> String {
+        handover(agent, plane, &self.credential(agent, plane).0)
+    }
+
+    /// Lay at `<at_agent>`'s `<at_plane>-con.toml` and `.key` the config
+    /// and key minted for `agent` on `plane`, replacing what stood.
+    fn lay(&self, at_agent: &str, at_plane: &str, agent: &str, plane: &str) {
+        let d = self.p(&format!("handover/box1/{at_agent}"));
+        let (_, key) = self.credential(agent, plane);
+        for (file, text) in [
+            (
+                d.join(format!("{at_plane}-con.toml")),
+                self.handover(agent, plane),
+            ),
+            (d.join(format!("{at_plane}-con.key")), key),
+        ] {
+            let _ = std::fs::remove_file(&file);
+            private_file(&file, &text);
+        }
     }
 
     fn p(&self, rel: &str) -> PathBuf {
@@ -121,7 +175,7 @@ impl Rig {
 
     fn connectors(&self) -> String {
         format!(
-            "\n[connectors]\ngate_account = \"gate-acct\"\nadmin_account = \"admin-acct\"\nadmin_path = \"{}\"\ngate_con_binary = \"{}\"\nadmin_con_binary = \"{}\"\nhandover = \"{}\"\n",
+            "\n[connectors]\ngate_account = \"gate-acct\"\nadmin_account = \"admin-acct\"\ngate_group = \"gate-grp\"\nadmin_group = \"admin-grp\"\nadmin_path = \"{}\"\ngate_con_binary = \"{}\"\nadmin_con_binary = \"{}\"\nhandover = \"{}\"\n",
             self.admin_path(),
             self.s("bin/gate-con"),
             self.s("bin/admin-con"),
@@ -141,11 +195,9 @@ impl Rig {
 
     fn agent(&self, name: &str, extra: &str) -> String {
         format!(
-            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\ntrace_socket = \"{}\"\nweaver_admin = \"{}\"\nadmin_log = \"{}\"\n{extra}",
+            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\nadmin_socket = \"{}\"\n{extra}",
             self.s(&format!("box/{name}/gate.sock")),
-            self.s(&format!("box/{name}/trace.sock")),
-            self.s("box/admin-program"),
-            self.s(&format!("box/{name}/admin.log")),
+            self.s("box/admin.sock"),
         )
     }
 
@@ -186,16 +238,16 @@ fn has_line(text: &str, line: &str) -> bool {
 fn a_render_stages_every_unit_and_config_with_the_properties_spec_8_1_names() {
     let rig = Rig::new();
     let staged = rig.stage(&rig.params()).expect("stages");
-    assert_eq!(staged.lines, 20, "8 directories and 12 files");
+    assert_eq!(staged.lines, 28, "12 directories and 16 files");
     let (bin, cfg, units) = (rig.s("bin"), rig.s("config"), rig.s("units"));
 
     let server = rig.read_staged(&format!("{units}/weaver-web.service"));
     let gate = rig.read_staged(&format!("{units}/weaver-web-gate-con@.service"));
     let admin = rig.read_staged(&format!("{units}/weaver-web-admin-con@.service"));
-    for (unit, account) in [
-        (&server, "web-acct"),
-        (&gate, "gate-acct"),
-        (&admin, "admin-acct"),
+    for (unit, account, group) in [
+        (&server, "web-acct", None),
+        (&gate, "gate-acct", Some("gate-grp")),
+        (&admin, "admin-acct", Some("admin-grp")),
     ] {
         for line in [
             &format!("User={account}"),
@@ -208,7 +260,13 @@ fn a_render_stages_every_unit_and_config_with_the_properties_spec_8_1_names() {
         ] {
             assert!(has_line(unit, line), "{line} missing from:\n{unit}");
         }
-        assert!(!unit.lines().any(|l| l.starts_with("Group=")), "no Group=");
+        // **A connector runs as the group its config and key are read
+        // through** (the brief of 2026-11-27, child 6); the server sets none.
+        let groups: Vec<&str> = unit.lines().filter(|l| l.starts_with("Group=")).collect();
+        match group {
+            Some(g) => assert_eq!(groups, [format!("Group={g}").as_str()], "{unit}"),
+            None => assert!(groups.is_empty(), "no Group=: {unit}"),
+        }
         assert!(
             unit.lines()
                 .filter(|l| !l.trim_start().starts_with('#'))
@@ -222,11 +280,11 @@ fn a_render_stages_every_unit_and_config_with_the_properties_spec_8_1_names() {
     ));
     assert!(has_line(
         &gate,
-        &format!("ExecStart={bin}/gate-con --config {cfg}/connectors/%i/gate-con.toml")
+        &format!("ExecStart={bin}/gate-con --config {cfg}/connectors/%i/gate/gate-con.toml")
     ));
     assert!(has_line(
         &admin,
-        &format!("ExecStart={bin}/admin-con --config {cfg}/connectors/%i/admin-con.toml")
+        &format!("ExecStart={bin}/admin-con --config {cfg}/connectors/%i/admin/admin-con.toml")
     ));
     assert!(has_line(&admin, "KillMode=mixed"));
     assert!(has_line(&admin, "TimeoutStopSec=1140"));
@@ -339,34 +397,38 @@ fn a_staged_config_is_the_handover_and_the_box_facts_and_loads() {
     let rig = Rig::new();
     rig.stage(&rig.params()).expect("stages");
     let cfg = rig.s("config");
+    let trust = Trust::invoking();
     for agent in ["a1", "a2"] {
-        let gate_path = rig.staged(&format!("{cfg}/connectors/{agent}/gate-con.toml"));
-        let admin_path = rig.staged(&format!("{cfg}/connectors/{agent}/admin-con.toml"));
+        let gate_path = rig.staged(&format!("{cfg}/connectors/{agent}/gate/gate-con.toml"));
+        let admin_path = rig.staged(&format!("{cfg}/connectors/{agent}/admin/admin-con.toml"));
         let gate_text = std::fs::read_to_string(&gate_path).unwrap();
         let admin_text = std::fs::read_to_string(&admin_path).unwrap();
         assert!(
-            gate_text.starts_with(&handover(agent, "gate")),
+            gate_text.starts_with(&rig.handover(agent, "gate")),
             "the handover, unchanged"
         );
         assert!(
-            admin_text.starts_with(&handover(agent, "admin")),
+            admin_text.starts_with(&rig.handover(agent, "admin")),
             "the handover, unchanged"
         );
 
-        let gate = GateConConfig::load(&gate_path).expect("gate-con loads its staged config");
+        let gate = GateConConfig::load_unkeyed(&gate_path, &trust)
+            .expect("gate-con loads its staged config");
         assert_eq!(gate.link.agent, agent);
         assert_eq!(gate.gate_socket, rig.p(&format!("box/{agent}/gate.sock")));
-        let admin = AdminConConfig::load(&admin_path).expect("admin-con loads its staged config");
+        let admin = AdminConConfig::load_unkeyed(&admin_path, &trust)
+            .expect("admin-con loads its staged config");
+        // **Each key is staged beside its config, where key_file names it**,
+        // the handover's key unchanged, the certificate over it.
+        for (plane, link) in [("gate", &gate.link), ("admin", &admin.link)] {
+            let at = format!("{cfg}/connectors/{agent}/{plane}/{plane}-con.key");
+            assert_eq!(link.key_file, PathBuf::from(&at));
+            let key = rig.read_staged(&at);
+            assert_eq!(key, rig.credential(agent, plane).1);
+            assert!(key_config::over_key(&link.certificate, &key));
+        }
         assert_eq!(admin.link.agent, agent);
-        assert_eq!(
-            admin.trace_socket,
-            Some(rig.p(&format!("box/{agent}/trace.sock")))
-        );
-        assert_eq!(admin.weaver_admin, Some(rig.p("box/admin-program")));
-        assert_eq!(
-            admin.admin_log,
-            Some(rig.p(&format!("box/{agent}/admin.log")))
-        );
+        assert_eq!(admin.admin_socket, Some(rig.p("box/admin.sock")));
         let (grace, bound) = if agent == "a2" {
             (Duration::from_secs(1500), Duration::from_secs(1200))
         } else {
@@ -387,7 +449,7 @@ fn a_staged_config_is_the_handover_and_the_box_facts_and_loads() {
 fn a_staged_backfill_is_bounded_as_admin_con_bounds_it() {
     let staged_config = |rig: &Rig, agent: &str, plane: &str| {
         rig.staged(&format!(
-            "{}/connectors/{agent}/{plane}-con.toml",
+            "{}/connectors/{agent}/{plane}/{plane}-con.toml",
             rig.s("config")
         ))
     };
@@ -399,7 +461,7 @@ fn a_staged_backfill_is_bounded_as_admin_con_bounds_it() {
     rig.stage(&rig.params()).expect("stages");
     let text = std::fs::read_to_string(admin_of(&rig, "a1")).unwrap();
     assert!(!text.contains("backfill_bytes"), "{text}");
-    let admin = AdminConConfig::load(&admin_of(&rig, "a1")).unwrap();
+    let admin = AdminConConfig::load_unkeyed(&admin_of(&rig, "a1"), &Trust::invoking()).unwrap();
     assert_eq!(admin.backfill_bytes, DEFAULT_BACKFILL_BYTES);
 
     // Zero and the bound: staged and loaded as given.
@@ -414,9 +476,11 @@ fn a_staged_backfill_is_bounded_as_admin_con_bounds_it() {
         );
         rig.stage(&params)
             .unwrap_or_else(|e| panic!("{given} stages: {e:#}"));
-        let admin = AdminConConfig::load(&admin_of(&rig, "a1")).unwrap();
+        let admin =
+            AdminConConfig::load_unkeyed(&admin_of(&rig, "a1"), &Trust::invoking()).unwrap();
         assert_eq!(admin.backfill_bytes, given, "a1 as given");
-        let other = AdminConConfig::load(&admin_of(&rig, "a2")).unwrap();
+        let other =
+            AdminConConfig::load_unkeyed(&admin_of(&rig, "a2"), &Trust::invoking()).unwrap();
         assert_eq!(other.backfill_bytes, DEFAULT_BACKFILL_BYTES, "a2 untouched");
         let gate = std::fs::read_to_string(gate_of(&rig, "a1")).unwrap();
         assert!(
@@ -450,19 +514,15 @@ fn a_staged_backfill_is_bounded_as_admin_con_bounds_it() {
 fn a_handover_of_the_other_plane_or_another_agent_is_refused_and_writes_nothing() {
     // a1's two files swapped: its gate file is minted for the admin plane.
     let rig = Rig::new();
-    let d = rig.p("handover/box1/a1");
-    std::fs::rename(d.join("gate-con.toml"), d.join("swap")).unwrap();
-    std::fs::rename(d.join("admin-con.toml"), d.join("gate-con.toml")).unwrap();
-    std::fs::rename(d.join("swap"), d.join("admin-con.toml")).unwrap();
+    rig.lay("a1", "gate", "a1", "admin");
+    rig.lay("a1", "admin", "a1", "gate");
     let e = rig.stage(&rig.params()).expect_err("refused");
     assert!(format!("{e:#}").contains("does not load"), "{e:#}");
     assert!(!rig.out().exists(), "a refusal leaves no directory");
 
     // a1's gate file names another agent.
     let rig = Rig::new();
-    let f = rig.p("handover/box1/a1/gate-con.toml");
-    std::fs::remove_file(&f).unwrap();
-    private_file(&f, &handover("zz", "gate"));
+    rig.lay("a1", "gate", "zz", "gate");
     let e = rig.stage(&rig.params()).expect_err("refused");
     assert!(format!("{e:#}").contains("names the agent \"zz\""), "{e:#}");
     assert!(!rig.out().exists(), "a refusal leaves no directory");
@@ -516,6 +576,16 @@ fn every_parameter_out_of_shape_is_refused_and_writes_nothing() {
             "an account out of its grammar",
             full.replace("gate_account = \"gate-acct\"", "gate_account = \"Gate\""),
             "is not a portable user name",
+        ),
+        (
+            "a group out of its grammar",
+            full.replace("admin_group = \"admin-grp\"", "admin_group = \"Admin\""),
+            "connectors.admin_group \"Admin\" is not a portable user name",
+        ),
+        (
+            "a missing group",
+            full.replace("gate_group = \"gate-grp\"\n", ""),
+            "gate_group",
         ),
         (
             "a name out of its grammar",
@@ -662,9 +732,7 @@ fn every_parameter_out_of_shape_is_refused_and_writes_nothing() {
     assert_eq!(std::fs::read_dir(rig.out()).unwrap().count(), 0);
 
     // An empty private <out> stands and is used, and a refusal empties it again.
-    let f = rig.p("handover/box1/a2/admin-con.toml");
-    std::fs::remove_file(&f).unwrap();
-    private_file(&f, &handover("a2", "gate"));
+    rig.lay("a2", "admin", "a2", "gate");
     let e = rig
         .stage(&full)
         .expect_err("a2's admin file is the gate plane's");
@@ -694,13 +762,28 @@ fn the_manifest_names_every_directory_and_file_parents_first() {
         assert_eq!(f.len(), 7, "{line}");
         let (kind, source, dest, owner, group, mode, sum) =
             (f[0], f[1], f[2], f[3], f[4], f[5], f[6]);
-        assert_eq!(group, "-", "{line}");
         let parent = Path::new(dest).parent().unwrap().display().to_string();
+        // **Each connector's folder, config and key are root's, of its
+        // plane's group** (the brief of 2026-11-27, child 6).
+        let plane_group = if parent.ends_with("/gate") || dest.ends_with("/gate") {
+            "gate-grp"
+        } else if parent.ends_with("/admin") || dest.ends_with("/admin") {
+            "admin-grp"
+        } else {
+            "-"
+        };
         match kind {
             "dir" => {
+                let plane = dest.ends_with("/gate") || dest.ends_with("/admin");
                 assert_eq!(
-                    (source, owner, mode, sum),
-                    ("-", "root", "0755", "-"),
+                    (source, owner, group, mode, sum),
+                    (
+                        "-",
+                        "root",
+                        if plane { plane_group } else { "-" },
+                        if plane { "0750" } else { "0755" },
+                        "-"
+                    ),
                     "{line}"
                 );
                 assert!(
@@ -718,16 +801,22 @@ fn the_manifest_names_every_directory_and_file_parents_first() {
                     .map(|b| format!("{b:02x}"))
                     .collect();
                 assert_eq!(sum, hex, "{line}");
-                let expect = if dest.ends_with("/gate-con.toml") {
-                    ("gate-acct", "0600")
-                } else if dest.ends_with("/admin-con.toml") {
-                    ("admin-acct", "0600")
+                let expect = if dest.ends_with("-con.toml") || dest.ends_with("-con.key") {
+                    ("root", plane_group, "0640")
                 } else if parent == bin {
-                    ("root", "0755")
+                    ("root", "-", "0755")
                 } else {
-                    ("root", "0644")
+                    ("root", "-", "0644")
                 };
-                assert_eq!((owner, mode), expect, "{line}");
+                assert_ne!(
+                    (
+                        dest.ends_with("-con.toml") || dest.ends_with("-con.key"),
+                        plane_group
+                    ),
+                    (true, "-"),
+                    "{line}"
+                );
+                assert_eq!((owner, group, mode), expect, "{line}");
                 if parent == bin {
                     assert_eq!(
                         Path::new(source).parent().unwrap(),
@@ -744,11 +833,13 @@ fn the_manifest_names_every_directory_and_file_parents_first() {
             other => panic!("kind {other}"),
         }
     }
-    assert_eq!(dirs.len(), 8);
-    assert_eq!(files, 12);
+    assert_eq!(dirs.len(), 12);
+    assert_eq!(files, 16);
     for d in [
         format!("{cfg}/connectors"),
         format!("{cfg}/connectors/a1"),
+        format!("{cfg}/connectors/a1/gate"),
+        format!("{cfg}/connectors/a2/admin"),
         format!("{units}/weaver-web-admin-con@a2.service.d"),
     ] {
         assert!(dirs.contains(&d), "{d}");
@@ -809,16 +900,18 @@ fn an_image_stages_the_connectors_programs_and_templates_and_nothing_of_an_agent
     let gate = rig.read_staged(&format!("{units}/{}", stage::GATE_UNIT));
     for line in [
         "User=gate-acct".to_owned(),
-        format!("ExecStart={bin}/gate-con --config {cfg}/connectors/%i/gate-con.toml"),
+        "Group=gate-grp".to_owned(),
+        format!("ExecStart={bin}/gate-con --config {cfg}/connectors/%i/gate/gate-con.toml"),
     ] {
         assert!(has_line(&gate, &line), "{line}: {gate}");
     }
     let admin = rig.read_staged(&format!("{units}/{}", stage::ADMIN_UNIT));
     for line in [
         "User=admin-acct".to_owned(),
+        "Group=admin-grp".to_owned(),
         format!("Environment=PATH={}", rig.admin_path()),
         "TimeoutStopSec=1140".to_owned(),
-        format!("ExecStart={bin}/admin-con --config {cfg}/connectors/%i/admin-con.toml"),
+        format!("ExecStart={bin}/admin-con --config {cfg}/connectors/%i/admin/admin-con.toml"),
     ] {
         assert!(has_line(&admin, &line), "{line}: {admin}");
     }
@@ -937,4 +1030,43 @@ fn the_tool_refuses_to_run_as_root() {
     let e = stage::stage(&rig.params(), &rig.out(), 0).expect_err("root");
     assert!(format!("{e:#}").contains("never as root"), "{e:#}");
     assert!(!rig.out().exists());
+}
+
+/// **A handover key that is not its config's is refused, and nothing is
+/// written** (the brief of 2026-11-27, child 6): a key missing, a key that
+/// is not one PKCS #8 ECDSA P-256 block, and another credential's key, the
+/// certificate not over it. No refusal prints the key.
+#[test]
+fn a_handover_key_that_is_not_its_configs_is_refused_and_writes_nothing() {
+    let rig = Rig::new();
+    let key = rig.p("handover/box1/a2/gate-con.key");
+    std::fs::remove_file(&key).unwrap();
+    let e = rig.stage(&rig.params()).expect_err("a missing key");
+    assert!(
+        format!("{e:#}").contains("the handover file") && format!("{e:#}").contains("is missing"),
+        "{e:#}"
+    );
+    assert!(!rig.out().exists(), "a refusal leaves no directory");
+
+    private_file(&key, "not a key\n");
+    let e = rig.stage(&rig.params()).expect_err("not a key");
+    assert!(
+        format!("{e:#}").contains("is not one PKCS #8 ECDSA P-256 PEM block"),
+        "{e:#}"
+    );
+    assert!(!rig.out().exists(), "a refusal leaves no directory");
+
+    std::fs::remove_file(&key).unwrap();
+    let other = rig.credential("a1", "gate").1;
+    private_file(&key, &other);
+    let e = rig
+        .stage(&rig.params())
+        .expect_err("another credential's key");
+    let words = format!("{e:#}");
+    assert!(
+        words.contains("certificate is not over the key in") && words.contains("a2/gate-con.key"),
+        "{words}"
+    );
+    assert!(!words.contains("PRIVATE KEY"), "{words}");
+    assert!(!rig.out().exists(), "a refusal leaves no directory");
 }

@@ -397,9 +397,11 @@ pub(crate) fn to_line<T: Serialize>(value: &T) -> Vec<u8> {
     line
 }
 
-/// **An `instance` or a run's id**: 16 lowercase hex digits.
+/// **An `instance` or a run's id**: 16 hex digits, of either case, as the
+/// contract writes "16 hex" for both and names a case only for a person's
+/// id. An id is compared as it is written.
 pub fn is_id(text: &str) -> bool {
-    text.len() == 16 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    text.len() == 16 && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Why a line could not be read.
@@ -434,34 +436,51 @@ pub(crate) async fn read_line<R: AsyncBufRead + Unpin>(
     reader: &mut R,
     bound: usize,
 ) -> Result<Option<Vec<u8>>, LineError> {
-    let mut line = Vec::new();
-    loop {
-        let buf = reader
-            .fill_buf()
-            .await
-            .map_err(|e| LineError::Io(e.to_string()))?;
+    read_line_into(reader, &mut Vec::new(), bound).await
+}
+
+/// **One line, taken up where an earlier call stood**: `partial` holds what
+/// a call dropped mid-line had already taken from the reader, so a caller
+/// that bounds the read with a timeout loses no byte and the next call
+/// never starts mid-line. Cancel-safe at its one await, `fill_buf`, since
+/// every byte consumed is in `partial` before the next. Emptied on every
+/// answer, a line or an error.
+pub(crate) async fn read_line_into<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    partial: &mut Vec<u8>,
+    bound: usize,
+) -> Result<Option<Vec<u8>>, LineError> {
+    let result = loop {
+        let buf = match reader.fill_buf().await {
+            Ok(buf) => buf,
+            Err(e) => break Err(LineError::Io(e.to_string())),
+        };
         if buf.is_empty() {
-            return if line.is_empty() {
+            break if partial.is_empty() {
                 Ok(None)
             } else {
                 Err(LineError::Truncated)
             };
         }
-        let room = bound - line.len();
+        let room = bound - partial.len();
         match buf.iter().take(room).position(|&b| b == b'\n') {
             Some(i) => {
-                line.extend_from_slice(&buf[..=i]);
+                partial.extend_from_slice(&buf[..=i]);
                 reader.consume(i + 1);
-                return Ok(Some(line));
+                break Ok(Some(std::mem::take(partial)));
             }
-            None if buf.len() >= room => return Err(LineError::TooLong(bound)),
+            None if buf.len() >= room => break Err(LineError::TooLong(bound)),
             None => {
                 let n = buf.len();
-                line.extend_from_slice(buf);
+                partial.extend_from_slice(buf);
                 reader.consume(n);
             }
         }
+    };
+    if result.is_err() {
+        partial.clear();
     }
+    result
 }
 
 /// Why an opening came to nothing the service said.
@@ -515,6 +534,8 @@ pub enum Opened {
 #[derive(Debug)]
 pub struct Connection {
     reader: BufReader<UnixStream>,
+    /// What a read dropped mid-line had taken, the next read's start.
+    partial: Vec<u8>,
     /// The service's start, as its `open` named it (section 8.4).
     pub instance: String,
     pub purpose: Purpose,
@@ -578,6 +599,7 @@ pub async fn open(
                 ));
             }
             Ok(Opened::Open(Connection {
+                partial: Vec::new(),
                 reader,
                 instance,
                 purpose,
@@ -610,7 +632,9 @@ impl Connection {
     /// long as the service takes, since a run's length is unbounded at the
     /// service (section 8.7); a caller bounds it.
     pub async fn next_control(&mut self) -> Result<Option<ControlLine>, LineError> {
-        let Some(line) = read_line(&mut self.reader, CONTROL_LINE_BOUND).await? else {
+        let Some(line) =
+            read_line_into(&mut self.reader, &mut self.partial, CONTROL_LINE_BOUND).await?
+        else {
             return Ok(None);
         };
         serde_json::from_slice(&line)
@@ -621,14 +645,17 @@ impl Connection {
     /// **The next line of a log connection**, read at `LOG_LINE_BOUND`:
     /// `None` where the service closed.
     pub async fn next_log(&mut self) -> Result<Option<LogLine>, LineError> {
-        let Some(line) = read_line(&mut self.reader, LOG_LINE_BOUND).await? else {
+        let Some(line) =
+            read_line_into(&mut self.reader, &mut self.partial, LOG_LINE_BOUND).await?
+        else {
             return Ok(None);
         };
         log_line(&line).map(Some).map_err(LineError::Malformed)
     }
 
     /// **The stream, for the relay's wire after a trace's `open`**, with any
-    /// byte already read past the answer kept in its buffer.
+    /// byte already read past the answer kept in its buffer. Taken at a
+    /// line's boundary: a part line a dropped read held is discarded.
     pub fn into_inner(self) -> BufReader<UnixStream> {
         self.reader
     }

@@ -15,7 +15,7 @@ use super::fake_service::{Act, Cut, FakeService, Grants, Script, raw_opening};
 use super::frames::Principal;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Notify;
 
 const AGENT: &str = "a1";
@@ -55,7 +55,7 @@ async fn next(connection: &mut admin_service::Connection) -> ControlLine {
 #[tokio::test]
 async fn every_opening_word_is_read_at_each_purpose_it_answers() {
     let fake = FakeService::start(&["show"], "idle");
-    let mut placed = 0;
+    let mut read: Vec<(Purpose, String)> = Vec::new();
     for purpose in [Purpose::Control, Purpose::Trace, Purpose::Log] {
         let mut words: Vec<&str> = word::OPENING.to_vec();
         match purpose {
@@ -65,15 +65,121 @@ async fn every_opening_word_is_read_at_each_purpose_it_answers() {
         }
         for w in words {
             fake.refuse(Some(purpose), w);
-            let refusal = refused(&fake, purpose).await;
-            assert_eq!(refusal.word, w, "{purpose:?}");
-            placed += 1;
+            read.push((purpose, refused(&fake, purpose).await.word));
         }
     }
+    // What the client read, against the contract's table written out.
+    let opening = [
+        "opening_malformed",
+        "opening_late",
+        "version_unknown",
+        "purpose_unknown",
+        "name_refused",
+        "full",
+    ];
+    let mut want: Vec<(Purpose, String)> = Vec::new();
+    for (purpose, own) in [
+        (Purpose::Control, None),
+        (Purpose::Trace, Some("relay_unreachable")),
+        (Purpose::Log, Some("log_unread")),
+    ] {
+        want.extend(
+            opening
+                .iter()
+                .chain(own.iter())
+                .map(|w| (purpose, (*w).to_owned())),
+        );
+    }
+    assert_eq!(read, want);
+}
+
+/// **The eighteen words are spelled as the contract's section 8.2 writes
+/// them**, each constant checked once against the literal, so the fake and
+/// the client cannot agree on a misspelling.
+#[test]
+fn the_eighteen_words_are_spelled_as_the_contract_writes_them() {
+    let spelled = [
+        (word::OPENING_MALFORMED, "opening_malformed"),
+        (word::OPENING_LATE, "opening_late"),
+        (word::VERSION_UNKNOWN, "version_unknown"),
+        (word::PURPOSE_UNKNOWN, "purpose_unknown"),
+        (word::NAME_REFUSED, "name_refused"),
+        (word::FULL, "full"),
+        (word::RELAY_UNREACHABLE, "relay_unreachable"),
+        (word::LOG_UNREAD, "log_unread"),
+        (word::ASK_UNKNOWN, "ask_unknown"),
+        (word::ASK_MALFORMED, "ask_malformed"),
+        (word::ASK_OUTSTANDING, "ask_outstanding"),
+        (word::GRANTS_UNREAD, "grants_unread"),
+        (word::VERB_UNKNOWN, "verb_unknown"),
+        (word::NOT_GRANTED, "not_granted"),
+        (word::GRANT_UNREAD, "grant_unread"),
+        (word::BUSY, "busy"),
+        (word::NOT_STARTED, "not_started"),
+        (word::LOG_BEHIND, "log_behind"),
+    ];
+    for (constant, literal) in spelled {
+        assert_eq!(constant, literal);
+    }
     assert_eq!(
-        placed, 20,
-        "six words at three purposes, and one of each purpose's own"
+        word::OPENING,
+        [
+            "opening_malformed",
+            "opening_late",
+            "version_unknown",
+            "purpose_unknown",
+            "name_refused",
+            "full"
+        ]
     );
+}
+
+/// **A read the caller gives up mid-line is taken up where it stood**: a
+/// line sent in two parts, the wait ending between them, is read whole by
+/// the next call.
+///
+/// Perturbation (measured 2026-11-27): make the part line local to the
+/// read again, and the next call reads from the line's middle, malformed.
+#[tokio::test]
+async fn a_read_dropped_mid_line_is_taken_up_where_it_stood() {
+    let dir = crate::test_dir::tempdir().unwrap();
+    let socket = dir.path().join("service.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (cut, cut_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut opening = String::new();
+        let mut reader = BufReader::new(&mut stream);
+        reader.read_line(&mut opening).await.unwrap();
+        stream
+            .write_all(
+                b"{\"open\":{\"version\":1,\"instance\":\"0123456789ABCDEF\"}}\n{\"grants\":{\"ve",
+            )
+            .await
+            .unwrap();
+        cut_rx.await.unwrap();
+        stream.write_all(b"rbs\":[\"show\"]}}\n").await.unwrap();
+        stream
+    });
+    let mut c = match admin_service::open(&socket, Purpose::Control, AGENT, SHORT).await {
+        Ok(Opened::Open(c)) => c,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(c.instance, "0123456789ABCDEF", "an instance of either case");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), c.next_control())
+            .await
+            .is_err(),
+        "the wait ends with part of a line read"
+    );
+    cut.send(()).unwrap();
+    assert_eq!(
+        next(&mut c).await,
+        ControlLine::Grants {
+            verbs: vec!["show".into()]
+        }
+    );
+    drop(server.await.unwrap());
 }
 
 /// **The fake judges an opening line as the contract's table does**: a line
@@ -465,7 +571,7 @@ async fn a_run_stands_from_its_grant_and_a_later_run_ask_names_it() {
     let mut script = Script::answer(Some("load"), serde_json::json!({"kind": "loaded"}));
     script.hold_start = Some(start.clone());
     script.release = Some(release.clone());
-    script.cut = Cut::BeforeStarted;
+    script.cut = Cut::Unstarted;
     fake.script(script);
     let mut c = open(&fake, Purpose::Control).await;
     c.ask(&Ask::Verb {
@@ -474,6 +580,11 @@ async fn a_run_stands_from_its_grant_and_a_later_run_ask_names_it() {
     })
     .await
     .unwrap();
+    // The connection closes while the run stands unstarted.
+    assert_eq!(
+        tokio::time::timeout(SHORT, c.next_control()).await.unwrap(),
+        Ok(None)
+    );
     let ask_run = async || {
         let mut r = open(&fake, Purpose::Control).await;
         r.ask(&Ask::Run {}).await.unwrap();
@@ -496,12 +607,19 @@ async fn a_run_stands_from_its_grant_and_a_later_run_ask_names_it() {
     assert_eq!(answer.ended, None);
     let run = answer.standing[0].run.clone();
     start.notify_one();
-    // The connection closes before `started`; the run goes on.
-    assert_eq!(
-        tokio::time::timeout(SHORT, c.next_control()).await.unwrap(),
-        Ok(None)
-    );
-    let started = ask_run().await;
+    // The run goes on, its start now dated.
+    let mut started = ask_run().await;
+    for _ in 0..50 {
+        if started
+            .standing
+            .first()
+            .is_some_and(|s| s.started_ms.is_some())
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        started = ask_run().await;
+    }
     assert!(started.standing[0].started_ms.is_some());
     release.notify_one();
     let mut ended = ask_run().await;
@@ -529,19 +647,34 @@ async fn a_run_stands_from_its_grant_and_a_later_run_ask_names_it() {
     assert_eq!(after.ended.as_ref().map(Final::run), Some(run.as_str()));
 }
 
-/// **A restart forgets every run under a new `instance`**, while a run it
-/// started goes on; a cut while running closes the connection after
-/// `started`.
+/// **A restart closes every connection and forgets every run under a new
+/// `instance`**, while a run it started goes on to its end, which is kept
+/// nowhere and sent to no one.
 #[tokio::test]
-async fn a_restart_forgets_its_runs_under_a_new_instance() {
+async fn a_restart_closes_every_connection_and_forgets_its_runs() {
+    let dir = crate::test_dir::tempdir().unwrap();
+    let file = dir.path().join("trace.ndjson");
+    std::fs::write(&file, b"{\"n\":1}\n").unwrap();
+    let mut relay = FakeRelay::new(&file);
+    relay.start();
     let fake = FakeService::start(&["show", "load"], "idle");
+    fake.with(|s| s.relay = Some(relay.socket.clone()));
     let release = Arc::new(Notify::new());
     let mut script = Script::answer(Some("load"), serde_json::json!({"kind": "loaded"}));
     script.release = Some(release.clone());
-    script.cut = Cut::WhileRunning;
     fake.script(script);
     let mut c = open(&fake, Purpose::Control).await;
     let before = c.instance.clone();
+    let mut log = open(&fake, Purpose::Log).await;
+    let mut trace = open(&fake, Purpose::Trace).await.into_inner();
+    trace
+        .get_mut()
+        .write_all(b"{\"offset\":0}\n")
+        .await
+        .unwrap();
+    let mut header = String::new();
+    trace.read_line(&mut header).await.unwrap();
+    assert!(header.contains("\"header\""), "{header}");
     c.ask(&Ask::Verb {
         verb: "load".into(),
         principal: person(),
@@ -549,13 +682,31 @@ async fn a_restart_forgets_its_runs_under_a_new_instance() {
     .await
     .unwrap();
     assert!(matches!(next(&mut c).await, ControlLine::Started { .. }));
+    fake.restart();
     assert_eq!(
         tokio::time::timeout(SHORT, c.next_control()).await.unwrap(),
-        Ok(None)
+        Ok(None),
+        "the control connection closes"
     );
-    fake.restart();
+    assert_eq!(
+        tokio::time::timeout(SHORT, log.next_log()).await.unwrap(),
+        Ok(None),
+        "the log connection closes"
+    );
+    let mut rest = Vec::new();
+    tokio::time::timeout(SHORT, trace.read_to_end(&mut rest))
+        .await
+        .unwrap()
+        .unwrap();
     release.notify_one();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The run goes on to its end.
+    for _ in 0..100 {
+        if fake.with(|s| s.runs.contains(&"end load".to_owned())) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(fake.with(|s| s.runs.clone()), ["start load", "end load"]);
     let mut r = open(&fake, Purpose::Control).await;
     assert_ne!(r.instance, before);
     r.ask(&Ask::Run {}).await.unwrap();
@@ -564,8 +715,105 @@ async fn a_restart_forgets_its_runs_under_a_new_instance() {
     };
     assert_eq!(answer.instance, r.instance);
     assert!(answer.standing.is_empty());
-    assert_eq!(answer.ended, None);
-    assert_eq!(fake.with(|s| s.ran.len()), 1, "the run went on");
+    assert_eq!(answer.ended, None, "its end is kept nowhere");
+}
+
+/// **A cut while running closes the connection after `started`**, and a
+/// cut after the start and before its line leaves the run started and
+/// standing.
+#[tokio::test]
+async fn a_cut_after_the_start_leaves_the_run_standing() {
+    let fake = FakeService::start(&["show", "load", "validate"], "idle");
+    for (verb, cut) in [
+        ("load", Cut::WhileRunning),
+        ("validate", Cut::BeforeStarted),
+    ] {
+        let release = Arc::new(Notify::new());
+        let mut script = Script::answer(Some(verb), serde_json::json!({"kind": "done"}));
+        script.release = Some(release.clone());
+        script.cut = cut;
+        fake.script(script);
+        let mut c = open(&fake, Purpose::Control).await;
+        c.ask(&Ask::Verb {
+            verb: verb.into(),
+            principal: person(),
+        })
+        .await
+        .unwrap();
+        if cut == Cut::WhileRunning {
+            assert!(matches!(next(&mut c).await, ControlLine::Started { .. }));
+        }
+        assert_eq!(
+            tokio::time::timeout(SHORT, c.next_control()).await.unwrap(),
+            Ok(None)
+        );
+        let mut r = open(&fake, Purpose::Control).await;
+        r.ask(&Ask::Run {}).await.unwrap();
+        let ControlLine::Run(answer) = next(&mut r).await else {
+            panic!("a run answer");
+        };
+        assert_eq!(answer.standing.len(), 1, "{verb}");
+        assert!(answer.standing[0].started_ms.is_some(), "{verb}");
+        release.notify_one();
+        for _ in 0..100 {
+            if fake.with(|s| s.runs.contains(&format!("end {verb}"))) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+}
+
+/// **Dropping the fake closes every connection that stands.**
+#[tokio::test]
+async fn dropping_the_fake_closes_every_connection() {
+    let fake = FakeService::start(&["show"], "idle");
+    let mut c = open(&fake, Purpose::Control).await;
+    let mut log = open(&fake, Purpose::Log).await;
+    drop(fake);
+    assert_eq!(
+        tokio::time::timeout(SHORT, c.next_control()).await.unwrap(),
+        Ok(None)
+    );
+    assert_eq!(
+        tokio::time::timeout(SHORT, log.next_log()).await.unwrap(),
+        Ok(None)
+    );
+}
+
+/// **The fake judges as a service does where the reading found it loose**:
+/// a principal with a member past its shape, or a person's id of another
+/// case, is `ask_malformed`; the grant is read before a scripted refusal,
+/// so a verb not granted is `not_granted` whatever is scripted; and it
+/// serves the one agent its first opening named.
+#[tokio::test]
+async fn the_fake_judges_the_principal_the_grant_and_the_agent_as_a_service() {
+    let fake = FakeService::start(&["show"], "idle");
+    for ask in [
+        &b"{\"verb\":{\"verb\":\"show\",\"principal\":{\"kind\":\"server\",\"x\":1}}}\n"[..],
+        b"{\"verb\":{\"verb\":\"show\",\"principal\":{\"kind\":\"person\",\"person_id\":\"pe-0123456789ABCDEF\"}}}\n",
+    ] {
+        let mut stream = open(&fake, Purpose::Control).await.into_inner();
+        stream.get_mut().write_all(ask).await.unwrap();
+        let mut line = String::new();
+        stream.read_line(&mut line).await.unwrap();
+        assert!(line.contains(word::ASK_MALFORMED), "{line}");
+    }
+    let mut busy = admin_service::Refused::new(word::BUSY, "scripted");
+    busy.run = Some("0123456789abcdef".into());
+    fake.script(Script::of(Some("load"), Act::Refuse(busy)));
+    let mut c = open(&fake, Purpose::Control).await;
+    c.ask(&Ask::Verb {
+        verb: "load".into(),
+        principal: person(),
+    })
+    .await
+    .unwrap();
+    assert!(matches!(next(&mut c).await, ControlLine::Refused(r) if r.word == word::NOT_GRANTED));
+    match admin_service::open(&fake.socket, Purpose::Control, "a2", SHORT).await {
+        Ok(Opened::Refused(r)) => assert_eq!(r.word, word::NAME_REFUSED),
+        other => panic!("another agent was admitted: {other:?}"),
+    }
 }
 
 /// **One ask at a time**: a line while one is outstanding closes the

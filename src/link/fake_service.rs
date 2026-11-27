@@ -27,6 +27,12 @@
 //!   `relay_unreachable`) or as one whose window passed (admitting the next);
 //! - on a log connection, send scripted messages, `log_behind`, or close, the
 //!   newest log connection replacing the older.
+//!
+//! **It serves one agent**: the name its first opening names, judged by the
+//! rule; an opening naming another is refused `name_refused`. Its runs, its
+//! log connection and its scripts are that one agent's, as the contract
+//! counts them by agent. A restart, and the fake's drop, close every
+//! connection that stands, as a real service's process ending does.
 
 use crate::link::admin_service::{
     self, Final, Purpose, Ran, Refused, Standing, VERBS, read_line, to_line, word,
@@ -34,12 +40,13 @@ use crate::link::admin_service::{
 use crate::link::frames::Principal;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Notify, mpsc};
+use tokio::sync::{Notify, mpsc, watch};
 use tokio::task::JoinHandle;
 
 /// How the fake answers a grants ask.
@@ -72,6 +79,9 @@ pub(crate) enum Act {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Cut {
     Never,
+    /// Once the run stands from its grant, while it is held before its
+    /// start: `started_ms` is null, and nothing has been sent.
+    Unstarted,
     /// Once the run stands, before `started` is sent.
     BeforeStarted,
     /// Once `started` is sent, while the run goes on.
@@ -154,6 +164,11 @@ pub(crate) struct State {
     ended: Option<Final>,
     /// Every verb whose root program started, with its principal.
     pub(crate) ran: Vec<(String, Principal)>,
+    /// `start <verb>` as each root program starts and `end <verb>` as its
+    /// final line is sent, in order.
+    pub(crate) runs: Vec<String>,
+    /// The one agent the fake serves, named by its first opening.
+    pub(crate) agent: Option<String>,
     /// The relay's socket a trace connection is spliced to.
     pub(crate) relay: Option<PathBuf>,
     relay_died: bool,
@@ -185,6 +200,9 @@ pub(crate) struct FakeService {
     pub(crate) socket: PathBuf,
     state: Arc<Mutex<State>>,
     run: JoinHandle<()>,
+    /// Bumped at a restart; dropped with the fake. Every connection
+    /// closes at either.
+    epoch: watch::Sender<u64>,
 }
 
 impl FakeService {
@@ -207,6 +225,8 @@ impl FakeService {
             held: Vec::new(),
             ended: None,
             ran: Vec::new(),
+            runs: Vec::new(),
+            agent: None,
             relay: None,
             relay_died: false,
             die_next: false,
@@ -217,12 +237,14 @@ impl FakeService {
         }));
         let listener = UnixListener::bind(&socket).unwrap();
         let shared = state.clone();
+        let (epoch, _) = watch::channel(0u64);
+        let epochs = epoch.clone();
         let run = tokio::spawn(async move {
             loop {
                 let Ok((stream, _)) = listener.accept().await else {
                     return;
                 };
-                tokio::spawn(serve(stream, shared.clone()));
+                tokio::spawn(serve(stream, shared.clone(), epochs.subscribe()));
             }
         });
         Self {
@@ -230,6 +252,7 @@ impl FakeService {
             socket,
             state,
             run,
+            epoch,
         }
     }
 
@@ -252,14 +275,16 @@ impl FakeService {
         self.with(|s| s.scripts.push_back(script));
     }
 
-    /// **The service restarts**: a new `instance`, no run kept, and a run it
-    /// started goes on with its end recorded nowhere.
+    /// **The service restarts**: every connection standing closes, a new
+    /// `instance`, no run kept, and a run it started goes on with its end
+    /// recorded nowhere and sent to no one.
     pub(crate) fn restart(&self) {
         self.with(|s| {
             s.instance = draw();
             s.held.clear();
             s.ended = None;
         });
+        self.epoch.send_modify(|e| *e += 1);
     }
 
     /// The next trace opening is answered `open` and closed before any
@@ -303,8 +328,11 @@ impl FakeService {
 }
 
 impl Drop for FakeService {
+    /// The accept loop ends, and every connection closes as the epoch's
+    /// sender goes with the fake.
     fn drop(&mut self) {
         self.run.abort();
+        self.epoch.send_modify(|e| *e += 1);
     }
 }
 
@@ -327,7 +355,7 @@ fn refused(refusal: Refused) -> Vec<u8> {
 }
 
 /// **One connection**: admission, the opening line, and its purpose.
-async fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>) {
+async fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, mut epoch: watch::Receiver<u64>) {
     // **The peer is judged at accept**: the test's own uid alone.
     // SAFETY: geteuid takes nothing and cannot fail.
     let me = unsafe { libc::geteuid() };
@@ -372,7 +400,20 @@ async fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>) {
             return;
         }
     };
-    let judged = judge(&line);
+    let judged = judge(&line).and_then(|(purpose, agent)| {
+        let mut s = state.lock().unwrap();
+        match &s.agent {
+            Some(served) if *served != agent => Err(Refused::new(
+                word::NAME_REFUSED,
+                "the fake serves one agent, and this is another",
+            )),
+            Some(_) => Ok(purpose),
+            None => {
+                s.agent = Some(agent);
+                Ok(purpose)
+            }
+        }
+    });
     let purpose = match judged {
         Ok(purpose) => purpose,
         Err(refusal) => {
@@ -391,15 +432,28 @@ async fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>) {
         write(reader.get_mut(), &refused(refusal)).await;
         return;
     }
+    // **A restart or the fake's drop closes the connection**: the trace
+    // and log futures are dropped with their streams; a control connection
+    // closes its shared writer itself, since a verb's task holds it.
     match purpose {
-        Purpose::Control => control(reader, state).await,
-        Purpose::Trace => trace(reader, state).await,
-        Purpose::Log => log(reader, state).await,
+        Purpose::Control => control(reader, state, epoch).await,
+        Purpose::Trace => {
+            tokio::select! {
+                () = trace(reader, state) => {}
+                _ = epoch.changed() => {}
+            }
+        }
+        Purpose::Log => {
+            tokio::select! {
+                () = log(reader, state) => {}
+                _ = epoch.changed() => {}
+            }
+        }
     }
 }
 
 /// **Judge an opening line** as the contract's table does.
-fn judge(line: &[u8]) -> Result<Purpose, Refused> {
+fn judge(line: &[u8]) -> Result<(Purpose, String), Refused> {
     let malformed = |why: &str| Refused::new(word::OPENING_MALFORMED, why);
     let value: serde_json::Value =
         serde_json::from_slice(line).map_err(|_| malformed("does not parse"))?;
@@ -438,7 +492,27 @@ fn judge(line: &[u8]) -> Result<Purpose, Refused> {
     if !name_judges(agent) {
         return Err(Refused::new(word::NAME_REFUSED, "the name fails the rule"));
     }
-    Ok(purpose)
+    Ok((purpose, agent.to_owned()))
+}
+
+/// **A principal of exactly its shape** (section 8.4): `{"kind":"server"}`,
+/// or `{"kind":"person","person_id":"pe-<16 lowercase hex>"}`, and no
+/// other member.
+fn principal(value: &serde_json::Value) -> Option<Principal> {
+    let o = value.as_object()?;
+    match (o.get("kind")?.as_str()?, o.len()) {
+        ("server", 1) => Some(Principal::Server),
+        ("person", 2) => {
+            let id = o.get("person_id")?.as_str()?;
+            let hex = id.strip_prefix("pe-")?;
+            (hex.len() == 16 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))).then(
+                || Principal::Person {
+                    person_id: id.to_owned(),
+                },
+            )
+        }
+        _ => None,
+    }
 }
 
 /// The writing half of a control connection, shared by its asks; `None`
@@ -466,15 +540,26 @@ fn open_line(state: &Arc<Mutex<State>>, purpose: Purpose) -> Vec<u8> {
 
 /// **A control connection**: one ask at a time, each answered by a task of
 /// its own, so a run goes on when the connection closes.
-async fn control(reader: BufReader<UnixStream>, state: Arc<Mutex<State>>) {
+async fn control(
+    reader: BufReader<UnixStream>,
+    state: Arc<Mutex<State>>,
+    mut epoch: watch::Receiver<u64>,
+) {
     let open = open_line(&state, Purpose::Control);
     let (read, mut write_half) = reader.into_inner().into_split();
     let _ = write_half.write_all(&open).await;
     let writer: Writer = Arc::new(tokio::sync::Mutex::new(Some(write_half)));
-    let outstanding = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let outstanding = Arc::new(AtomicBool::new(false));
     let mut read = BufReader::new(read);
     loop {
-        let line = match read_line(&mut read, 4096).await {
+        let read = tokio::select! {
+            read = read_line(&mut read, 4096) => read,
+            _ = epoch.changed() => {
+                close(&writer).await;
+                return;
+            }
+        };
+        let line = match read {
             Ok(Some(line)) => line,
             Ok(None) => return,
             Err(_) => {
@@ -487,7 +572,7 @@ async fn control(reader: BufReader<UnixStream>, state: Arc<Mutex<State>>) {
                 return;
             }
         };
-        if outstanding.load(std::sync::atomic::Ordering::SeqCst) {
+        if outstanding.load(Ordering::SeqCst) {
             say(
                 &writer,
                 &refused(Refused::new(word::ASK_OUTSTANDING, "one ask at a time")),
@@ -528,7 +613,7 @@ async fn control(reader: BufReader<UnixStream>, state: Arc<Mutex<State>>) {
                         .await;
                     }
                     Grants::Silent => {
-                        outstanding.store(true, std::sync::atomic::Ordering::SeqCst);
+                        outstanding.store(true, Ordering::SeqCst);
                     }
                 }
             }
@@ -545,16 +630,7 @@ async fn control(reader: BufReader<UnixStream>, state: Arc<Mutex<State>>) {
             }
             "verb" => {
                 let verb = body.get("verb").and_then(|v| v.as_str()).map(str::to_owned);
-                let principal = body
-                    .get("principal")
-                    .cloned()
-                    .and_then(|p| serde_json::from_value::<Principal>(p).ok())
-                    .filter(|p| match p {
-                        Principal::Server => true,
-                        Principal::Person { person_id } => person_id
-                            .strip_prefix("pe-")
-                            .is_some_and(admin_service::is_id),
-                    });
+                let principal = body.get("principal").and_then(principal);
                 let (Some(verb), Some(principal)) = (verb, principal) else {
                     say(&writer, &malformed()).await;
                     close(&writer).await;
@@ -568,12 +644,11 @@ async fn control(reader: BufReader<UnixStream>, state: Arc<Mutex<State>>) {
                     .await;
                     continue;
                 }
-                outstanding.store(true, std::sync::atomic::Ordering::SeqCst);
+                outstanding.store(true, Ordering::SeqCst);
                 let (state, writer, outstanding) =
                     (state.clone(), writer.clone(), outstanding.clone());
                 tokio::spawn(async move {
-                    run_verb(&state, &writer, verb, principal).await;
-                    outstanding.store(false, std::sync::atomic::Ordering::SeqCst);
+                    run_verb(&state, &writer, &outstanding, verb, principal).await;
                 });
             }
             _ => {
@@ -603,7 +678,21 @@ fn show_answer(s: &mut State) -> serde_json::Value {
 
 /// **One verb ask, to its final line**: the grant read in the request, then
 /// machine A, then the run.
-async fn run_verb(state: &Arc<Mutex<State>>, writer: &Writer, verb: String, principal: Principal) {
+///
+/// **The ask's flag is cleared before its last line goes out**, so the
+/// connector's next ask, sent as soon as that line arrives, never meets
+/// `ask_outstanding`.
+async fn run_verb(
+    state: &Arc<Mutex<State>>,
+    writer: &Writer,
+    outstanding: &AtomicBool,
+    verb: String,
+    principal: Principal,
+) {
+    let last_line = async |bytes: Vec<u8>| {
+        outstanding.store(false, Ordering::SeqCst);
+        say(writer, &bytes).await;
+    };
     let show = verb == "show";
     // The script it takes, the grant's read and machine A, under one lock.
     let admitted = {
@@ -628,18 +717,27 @@ async fn run_verb(state: &Arc<Mutex<State>>, writer: &Writer, verb: String, prin
                 Script::answer(None, serde_json::json!({"kind": "answered", "verb": verb}))
             }
         });
-        if let Act::Refuse(refusal) = &script.act {
-            Err(refusal.clone())
-        } else if !s
+        // **The grant is read first** (section 8.4): a scripted
+        // `grant_unread` is that read failing; `not_granted` whatever
+        // stands; any other scripted refusal only for a granted verb.
+        let scripted = match &script.act {
+            Act::Refuse(refusal) => Some(refusal.clone()),
+            _ => None,
+        };
+        let granted = s
             .granted
             .clone()
             .unwrap_or_else(|| match &s.grants {
                 Grants::List(verbs) => verbs.clone(),
                 _ => Vec::new(),
             })
-            .contains(&verb)
-        {
+            .contains(&verb);
+        if let Some(refusal) = scripted.clone().filter(|r| r.word == word::GRANT_UNREAD) {
+            Err(refusal)
+        } else if !granted {
             Err(Refused::new(word::NOT_GRANTED, "the grant's read exited 1"))
+        } else if let Some(refusal) = scripted {
+            Err(refusal)
         } else {
             let holder = s.held.first().cloned();
             let beside = holder
@@ -668,7 +766,7 @@ async fn run_verb(state: &Arc<Mutex<State>>, writer: &Writer, verb: String, prin
     let (run, instance, script) = match admitted {
         Ok(admitted) => admitted,
         Err(refusal) => {
-            say(writer, &refused(refusal)).await;
+            last_line(refused(refusal)).await;
             return;
         }
     };
@@ -680,18 +778,18 @@ async fn run_verb(state: &Arc<Mutex<State>>, writer: &Writer, verb: String, prin
         cut,
         ..
     } = script;
+    if cut == Cut::Unstarted {
+        close(writer).await;
+    }
     if let Some(gate) = hold_start {
         gate.notified().await;
     }
     if matches!(act, Act::StartFails) {
         state.lock().unwrap().held.retain(|h| h.run != run);
-        say(
-            writer,
-            &refused(Refused::new(
-                word::NOT_STARTED,
-                "the root program could not start",
-            )),
-        )
+        last_line(refused(Refused::new(
+            word::NOT_STARTED,
+            "the root program could not start",
+        )))
         .await;
         return;
     }
@@ -702,6 +800,7 @@ async fn run_verb(state: &Arc<Mutex<State>>, writer: &Writer, verb: String, prin
             held.started_ms = Some(now_ms());
         }
         s.ran.push((verb.clone(), principal));
+        s.runs.push(format!("start {verb}"));
     }
     if let Some(hook) = hook {
         hook();
@@ -720,7 +819,7 @@ async fn run_verb(state: &Arc<Mutex<State>>, writer: &Writer, verb: String, prin
     if let Some(gate) = release {
         gate.notified().await;
     }
-    let last = {
+    let final_line = {
         let mut s = state.lock().unwrap();
         let last = match act {
             Act::Answer {
@@ -752,9 +851,10 @@ async fn run_verb(state: &Arc<Mutex<State>>, writer: &Writer, verb: String, prin
         if !show && s.instance == instance {
             s.ended = Some(last.clone());
         }
+        s.runs.push(format!("end {verb}"));
         last
     };
-    say(writer, &to_line(&last)).await;
+    last_line(to_line(&final_line)).await;
 }
 
 /// **A trace connection**: the relay's dial before `open`, then the splice.

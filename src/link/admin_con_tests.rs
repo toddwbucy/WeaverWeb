@@ -4120,6 +4120,85 @@ async fn admin_con_sends_another_partys_line_upstream() {
     con.stop().await;
 }
 
+/// **A word of the service's outside a kind's shape never holds the plane
+/// refused** (Spec 2.14): the log connection closed with a refusal whose
+/// word the server's door would refuse as a kind (`Log-Unread`) raises a
+/// connector failure of the fixed kind `service_word_unknown`, the word
+/// quoted in its message; the server takes it and raises its alert, and a
+/// line after it still lands, so the link stood.
+///
+/// Perturbation (measured 2026-11-27): give `service_<word>` for any word
+/// again, and the door refuses the entry and closes the link at every
+/// reconnection, so neither alert lands.
+#[tokio::test]
+async fn a_word_outside_a_kinds_shape_is_a_fixed_kind_and_the_link_stands() {
+    let Some(lab) = Lab::open().await else { return };
+    let trace = Trace::new();
+    let out = crate::test_dir::tempdir().unwrap();
+    let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
+    let invoker = Service::new(&["show"], "idle");
+    let mut con = Running::start(config(&path), invoker.clone());
+    con.wait("admitted", |s| s.admitted).await;
+    log_open(&trace).await;
+    let mut line = serde_json::to_vec(&json!({"refused": super::admin_service::Refused::new(
+        "Log-Unread",
+        "a word outside the contract"
+    )}))
+    .unwrap();
+    line.push(b'\n');
+    trace.service.log_raw(&line);
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    let failed = loop {
+        let found = lab.store.alerts_on(&id, 10).await.unwrap();
+        if let Some(a) = found.iter().find(|a| a.subject == "service_word_unknown") {
+            break a.clone();
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "no alert of the fixed kind: {found:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert!(
+        failed.summary.contains("\"Log-Unread\""),
+        "the word quoted: {}",
+        failed.summary
+    );
+    // The log connection is reopened on the backoff.
+    let until = tokio::time::Instant::now() + SOON;
+    while trace
+        .service
+        .with(|s| s.opened.iter().filter(|p| **p == Purpose::Log).count())
+        < 2
+    {
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the log never reopened"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    trace.service.log(&LogEvent::Line {
+        line: json!({"wall_ms": 1, "command": "weaver-admin unload karl", "uid": 1001,
+            "verb": "unload", "agent": "karl",
+            "outcome": json!({"kind": "save_point_not_taken", "missed": "finished"}).to_string()}),
+        through_service: false,
+    });
+    let until = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let found = lab.store.alerts_on(&id, 10).await.unwrap();
+        if found.iter().any(|a| a.kind == "save_point_missed") {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < until,
+            "the line after it never landed: {found:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    con.stop().await;
+}
+
 /// **No window waits for good on an acknowledgement the server dropped**:
 /// with the server dropping the acknowledgements of a full window, as a
 /// full write queue does, admin-con's pump sends that window again after

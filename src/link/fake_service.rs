@@ -202,6 +202,8 @@ pub(crate) struct State {
     pub(crate) die_next: bool,
     pub(crate) window_next: bool,
     pub(crate) stall_next: bool,
+    /// Every log opening is admitted and closed at once, nothing sent.
+    pub(crate) log_closes_at_once: bool,
     log: Option<(u64, mpsc::UnboundedSender<LogOut>)>,
     log_seq: u64,
     /// Every opening the fake answered `open`, by purpose.
@@ -262,6 +264,7 @@ impl FakeService {
             die_next: false,
             window_next: false,
             stall_next: false,
+            log_closes_at_once: false,
             log: None,
             log_seq: 0,
             opened: Vec::new(),
@@ -1009,6 +1012,9 @@ async fn log(reader: BufReader<UnixStream>, state: Arc<Mutex<State>>) {
     };
     let mut stream = reader.into_inner();
     write(&mut stream, &open).await;
+    if state.lock().unwrap().log_closes_at_once {
+        return;
+    }
     let mut byte = [0u8; 1];
     loop {
         tokio::select! {

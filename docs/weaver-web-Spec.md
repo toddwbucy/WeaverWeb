@@ -2854,13 +2854,25 @@ raised only for an entry that did not come through WeaverWeb**:
   truncation or replacement of the file as a discontinuity. **Every gap is
   marked**: any close of the connection is a discontinuity, and so is an
   opening admitted after a refusal or a failed opening, since lines
-  appended meanwhile were not read. A reopening backs off from 1 to 30
-  seconds, except after `log_behind`, the service's word that admin-con
-  fell behind, which is reopened at once; `ask_malformed` closes it with a
-  failure entry; a refusal of the opening by `log_unread`, or by a word
-  that says admin-con or its config is at fault, raises one failure entry
-  per change of word and not one at every retry, and `full` and
-  `opening_late` raise none. Beside each line stands one field **the
+  appended meanwhile were not read. A reopening backs off on steps from 1
+  to 30 seconds, waiting between half of each step and the whole, and only
+  a connection that proved itself, one that carried a message or stood for
+  30 seconds, starts the steps again, so a service that admits and closes
+  at once is reopened on the growing wait. `log_behind`, the service's word
+  that admin-con fell behind, is reopened at once, unless no line was read
+  since the last `log_behind`, when it waits on the backoff. **A malformed
+  message closes the connection and is marked**: a line that does not
+  parse or passes the bound raises `service_malformed`, and any other
+  refusal on the standing connection (`ask_malformed` among them) raises
+  `service_<word>`, each with a discontinuity and a reopening on the
+  backoff. A refusal of the opening by `log_unread`, or by a word that says
+  admin-con or its config is at fault, raises one failure entry per change
+  of word and not one at every retry, an admission clearing it; `full` and
+  `opening_late` raise none. **Every refusal of the opening is retried on
+  the backoff**, the three defect words `version_unknown`,
+  `purpose_unknown` and `name_refused` among them, so a service upgraded or
+  a name mended while admin-con runs is taken at the next opening, at the
+  cost of one opening every 30 seconds. Beside each line stands one field **the
   service judges and admin-con carries: `own`, the message's
   `through_service`**, true where the line names the service's account as
   its caller or peer, an act that came through WeaverWeb. A
@@ -2880,7 +2892,11 @@ raised only for an entry that did not come through WeaverWeb**:
 - **a connector's own failure** raises `failed` from its source, its subject
   the failure's kind: admin-con's `ceiling_not_read`, `trace_relay_refused`,
   `service_<word>` for a word of the service that says admin-con or its
-  config is at fault, or for `log_unread`, and either connector's `link_outage` (the outage's
+  config is at fault, or for `log_unread`, and `service_word_unknown` for a
+  word outside a kind's shape (lowercase letters and underscores, 64 bytes
+  with its prefix), the word quoted in the message and cut at 48 bytes,
+  since the door refuses a kind outside that shape and closes the link, and
+  either connector's `link_outage` (the outage's
   length, once the link is back) and `entries_dropped`.
 
 **At least once, taken once, bounded.** An entry stays in the connector's
@@ -8124,7 +8140,7 @@ two connectors report.
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
 | a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con and the fake service raises one; judge `own` by the line's uid against admin-con's own again, in `src/link/admin_log_tests.rs`, and the service's judgment is lost (measured 2026-11-27); put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |
 | a connector's entry is taken once, though it is sent again, and acknowledged only once durable | perturbation in `src/entries_tests.rs`: drop the run's mark, and an entry resent on a new connection is logged twice; read on past an entry the store did not take, and the next entry moves the mark past it, so its resend is taken for a duplicate and never logged; acknowledge without writing the entry's row, and 1,000 entries acknowledged while the drainer is held are never logged; delete a row whose line failed, and that entry's line is lost; drop the inbox's backoff, and rows that keep failing hold the entry behind them forever; keep the entry as `jsonb`, or leave a NUL in an alert's text, and an entry carrying a NUL is never applied; raise a row's alert in a transaction apart from its record on the row, fail the record, and the retry raises it again; drop the claim, and two drainers on one store write rows' lines twice; leave the drainer out of its listener's tasks, and a stopped listener's drainer applies rows after its stop; end the alerts' worker before the connections at a stop, and a teardown's unknown and its line are lost; skip a blank line of `admin.log`, and it is no entry; drop the connector's resend, and a window whose acknowledgements the server dropped stalls the pump for good; restart the resend's timer at every wake, and a line every quarter of the bound postpones it for as long as the stream lasts; choose due rows by their identity alone, and an entry behind seventy slowly failing rows starves; send an oversized `admin_log` entry in the failure shape, and the door refuses it at every resend |
-| admin-con reads `admin.log` through the service's `log` connection: each message its entry, every gap a discontinuity, `log_behind` reopened at once, `log_unread` one entry per change (sections 2.14, 7.2) | perturbation in `src/link/admin_log_tests.rs`, against the fake service: drop the discontinuity at an opening admitted after a refusal, and the gap reads as continuous; raise the failure at every refused opening, and the retries raise one each (each measured 2026-11-27) |
+| admin-con reads `admin.log` through the service's `log` connection: each message its entry, every gap a discontinuity, `log_behind` reopened at once and a second with no line since on the backoff, only a connection that proved itself resetting the backoff, `log_unread` one entry per change, and a word outside a kind's shape a fixed kind (sections 2.14, 7.2) | perturbation in `src/link/admin_log_tests.rs`, against the fake service: drop the discontinuity at an opening admitted after a refusal, and the gap reads as continuous; raise the failure at every refused opening, and the retries raise one each; keep the word's memory across an admission, and the same word after it raises nothing; reset the backoff at every admission, and a service admitting and closing at once is reopened every half step; reopen at once after every `log_behind`, and the second comes with no wait; and in `src/link/admin_con_tests.rs`, against the real listener, give `service_<word>` for any word, and a word outside the shape closes the link at every reconnection (each measured 2026-11-27) |
 | a connector's backlog of entries is bounded, its drops counted and reported | perturbation in `src/entries_tests.rs`: drop the bound, and a backlog past it holds every entry |
 | the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |
 | a load that reset the agent is a `data_lost` alert, raised once | perturbation in `src/entries_tests.rs`: drop the reset check, and the trace's `load` event carrying `reset` raises nothing |

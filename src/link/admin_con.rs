@@ -417,7 +417,8 @@ impl Reach {
                 if changed && service_invoker::is_defect(word) {
                     tracing::error!("{why}");
                     if let Some(entries) = &self.entries {
-                        entries.failure(&service_invoker::entry_kind(word), why.clone());
+                        let (kind, why) = service_invoker::service_failure(word, why.clone());
+                        entries.failure(&kind, why);
                     }
                 }
             }

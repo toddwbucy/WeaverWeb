@@ -19,10 +19,13 @@
 //! **Every gap is marked**: any close of the connection, and an opening
 //! admitted after a refusal or a failed opening, is a discontinuity entry,
 //! since lines appended meanwhile were not read. A reopening backs off from
-//! `BACKOFF.base` to `BACKOFF.cap`, except after `log_behind`, which is
-//! reopened at once. A refusal of the opening by `log_unread` or by a word
-//! that says admin-con or its config is at fault raises one connector
-//! failure entry per change of word, not one at every retry.
+//! `BACKOFF.base` to `BACKOFF.cap`, and only a connection that proved
+//! itself (a message carried, or standing as long as the cap) resets it.
+//! `log_behind` is reopened at once, unless no line was read since the last
+//! one, when it waits on the backoff. A refusal of the opening by
+//! `log_unread` or by a word that says admin-con or its config is at fault
+//! raises one connector failure entry per change of word, not one at every
+//! retry.
 //!
 //! **It runs as a task of its own**: a slow or silent service never holds
 //! the trace or the verbs, and it ends at the stop or where the stop's
@@ -39,12 +42,14 @@ use crate::link::admin_service::{
 };
 use crate::link::client::Backoff;
 use crate::link::entries::Entries;
-use crate::link::service_invoker::{entry_kind, is_defect};
+use crate::link::service_invoker::{is_defect, service_failure};
 
 /// The entries' source for a line of `admin.log`.
 pub const SOURCE: &str = "admin_log";
 
-/// **The reopening's backoff**, 1 to 30 seconds (the brief's decision 6).
+/// **The reopening's backoff**: steps from 1 to 30 seconds, of which
+/// `Backoff::delay` waits between half and the whole (the brief's decision
+/// 6).
 pub const BACKOFF: Backoff = Backoff {
     base: Duration::from_secs(1),
     cap: Duration::from_secs(30),
@@ -114,6 +119,10 @@ pub fn follow(
         let mut gap = false;
         let mut last_word: Option<String> = None;
         let mut failures: u32 = 0;
+        // **A `log_behind` with no line read since**: a second one waits on
+        // the backoff, since a correct service never sends two with nothing
+        // between.
+        let mut behind = false;
         loop {
             if *shutdown.borrow() {
                 return;
@@ -134,14 +143,23 @@ pub fn follow(
                         );
                     }
                     last_word = None;
-                    failures = 0;
+                    // **Only a connection that proved itself resets the
+                    // backoff**: one that carried a message, or stood as
+                    // long as the backoff's cap. An opening admitted and
+                    // closed at once backs off as a failure does.
+                    let admitted = tokio::time::Instant::now();
+                    let mut carried = false;
                     loop {
                         let line = tokio::select! {
                             line = conn.next_log() => line,
                             _ = shutdown.changed() => return,
                         };
                         match line {
-                            Ok(Some(LogLine::Log(event))) => entries.push(SOURCE, entry_of(&event)),
+                            Ok(Some(LogLine::Log(event))) => {
+                                carried = true;
+                                behind = false;
+                                entries.push(SOURCE, entry_of(&event));
+                            }
                             Ok(Some(LogLine::Refused(refusal)))
                                 if refusal.word == word::LOG_BEHIND =>
                             {
@@ -152,7 +170,7 @@ pub fn follow(
                                         refusal.detail
                                     )),
                                 );
-                                at_once = true;
+                                at_once = !std::mem::replace(&mut behind, true);
                                 break;
                             }
                             Ok(Some(LogLine::Refused(refusal))) => {
@@ -161,7 +179,8 @@ pub fn follow(
                                     refusal.word, refusal.detail
                                 );
                                 tracing::error!("{why}");
-                                entries.failure(&entry_kind(&refusal.word), why.clone());
+                                let (kind, message) = service_failure(&refusal.word, why.clone());
+                                entries.failure(&kind, message);
                                 entries.push(
                                     SOURCE,
                                     discontinuity(&format!(
@@ -189,6 +208,9 @@ pub fn follow(
                             }
                         }
                     }
+                    if carried || admitted.elapsed() >= backoff.cap {
+                        failures = 0;
+                    }
                 }
                 Ok(Opened::Refused(refusal)) => {
                     gap = true;
@@ -199,7 +221,8 @@ pub fn follow(
                         );
                         tracing::warn!("{why}");
                         if raises(&refusal.word) {
-                            entries.failure(&entry_kind(&refusal.word), why);
+                            let (kind, message) = service_failure(&refusal.word, why);
+                            entries.failure(&kind, message);
                         }
                         last_word = Some(refusal.word);
                     }

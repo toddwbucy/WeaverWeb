@@ -223,10 +223,11 @@ async fn log_behind_is_a_discontinuity_reopened_at_once() {
 
 /// **A refusal of the opening by `log_unread`, or by a word of admin-con's
 /// defect, raises one failure per change of word, not one per retry**; an
-/// admission clears it.
+/// admission clears it, so the same word after one raises once more.
 ///
-/// Perturbation (measured 2026-11-27): raise the entry at every refused
-/// opening, and the retries raise one each.
+/// Perturbations (measured 2026-11-27): raise the entry at every refused
+/// opening, and the retries raise one each; keep the word's memory across
+/// an admission, and the same word after it raises nothing.
 #[tokio::test]
 async fn log_unread_raises_one_entry_per_change_not_per_retry() {
     let fake = FakeService::start(&["show"], "idle");
@@ -243,6 +244,135 @@ async fn log_unread_raises_one_entry_per_change_not_per_retry() {
         [
             "admin-con failure service_log_unread",
             "admin-con failure service_name_refused",
+            "admin_log discontinuity",
+        ]
+    );
+    fake.refuse(Some(Purpose::Log), word::NAME_REFUSED);
+    fake.log_close();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    fake.with(|s| s.refuse = None);
+    wait_logs(&fake, 2).await;
+    wait_entries(&r.entries, 6).await;
+    assert_eq!(
+        shapes(&r.entries)[3..],
+        [
+            "admin_log discontinuity",
+            "admin-con failure service_name_refused",
+            "admin_log discontinuity",
+        ],
+        "the same word after an admission raises once more"
+    );
+}
+
+/// **Each word the contract gives the log's opening is placed** (the
+/// brief's word table, the log column), one test over the table: every
+/// refusal is no log and a reopening on the backoff, marked at the
+/// admission after it; `log_unread` and the four words that say admin-con
+/// or its config is at fault raise one entry, `opening_late` and `full`
+/// none.
+#[tokio::test]
+async fn every_word_refusing_the_log_opening_is_placed() {
+    let table = [
+        (word::OPENING_MALFORMED, true),
+        (word::OPENING_LATE, false),
+        (word::VERSION_UNKNOWN, true),
+        (word::PURPOSE_UNKNOWN, true),
+        (word::NAME_REFUSED, true),
+        (word::FULL, false),
+        (word::LOG_UNREAD, true),
+    ];
+    for (refusal, raises) in table {
+        let fake = FakeService::start(&["show"], "idle");
+        fake.refuse(Some(Purpose::Log), refusal);
+        let r = follow(&fake, SHORT);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(logs(&fake), 0, "{refusal}: no log");
+        fake.with(|s| s.refuse = None);
+        wait_logs(&fake, 1).await;
+        let mut expected = Vec::new();
+        if raises {
+            expected.push(format!("admin-con failure service_{refusal}"));
+        }
+        expected.push("admin_log discontinuity".to_owned());
+        wait_entries(&r.entries, expected.len()).await;
+        assert_eq!(shapes(&r.entries), expected, "{refusal}");
+    }
+}
+
+/// **An opening admitted and closed at once backs off as a failure
+/// does**: only a connection that proved itself resets the backoff, so a
+/// service admitting and closing every connection is reopened on a
+/// growing wait, not every half step, and raises one discontinuity per
+/// opening, no more.
+///
+/// Perturbation (measured 2026-11-27): reset the backoff at every
+/// admission again, and the openings come every half step without end.
+#[tokio::test]
+async fn an_opening_closed_at_once_does_not_reset_the_backoff() {
+    let fake = FakeService::start(&["show"], "idle");
+    fake.with(|s| s.log_closes_at_once = true);
+    let backoff = Backoff {
+        base: Duration::from_millis(50),
+        cap: Duration::from_secs(2),
+    };
+    let r = follow(&fake, backoff);
+    // Ten openings take at least 25+50+100+200+400+800+1000*3 ms once the
+    // backoff grows; reset at every admission, they take at most 0.5 s.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let opened = logs(&fake);
+    assert!(
+        (3..10).contains(&opened),
+        "{opened} openings in 1.5 s; the backoff was reset by connections that carried nothing"
+    );
+    let marked = shapes(&r.entries);
+    assert!(
+        marked.len() <= opened && marked.iter().all(|e| e == "admin_log discontinuity"),
+        "{opened} openings: {marked:?}"
+    );
+}
+
+/// **A second `log_behind` with no line read since waits on the
+/// backoff**: the first is reopened at once; a second with nothing between
+/// is not; once a line is read, the next is at once again.
+///
+/// Perturbation (measured 2026-11-27): reopen at once after every
+/// `log_behind`, and the second reopening comes with no wait.
+#[tokio::test]
+async fn a_second_log_behind_with_no_line_between_waits_on_the_backoff() {
+    let fake = FakeService::start(&["show"], "idle");
+    let backoff = Backoff {
+        base: Duration::from_secs(2),
+        cap: Duration::from_secs(2),
+    };
+    let r = follow(&fake, backoff);
+    wait_logs(&fake, 1).await;
+    fake.log_behind();
+    tokio::time::timeout(Duration::from_millis(900), wait_logs(&fake, 2))
+        .await
+        .expect("the first log_behind is reopened at once");
+    fake.log_behind();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        logs(&fake),
+        2,
+        "a second log_behind with no line since waits"
+    );
+    wait_logs(&fake, 3).await;
+    fake.log(&LogEvent::Line {
+        line: json!({"n": 1}),
+        through_service: false,
+    });
+    wait_entries(&r.entries, 3).await;
+    fake.log_behind();
+    tokio::time::timeout(Duration::from_millis(900), wait_logs(&fake, 4))
+        .await
+        .expect("after a line, log_behind is reopened at once again");
+    assert_eq!(
+        shapes(&r.entries),
+        [
+            "admin_log discontinuity",
+            "admin_log discontinuity",
+            "admin_log line own=false",
             "admin_log discontinuity",
         ]
     );
@@ -268,6 +398,35 @@ async fn ask_malformed_on_the_log_closes_it_with_an_entry() {
             "admin_log discontinuity"
         ]
     );
+}
+
+/// **The reader ends at the stop wherever it waits**: in the backoff
+/// after a refusal, and in an opening the service has not answered.
+#[tokio::test]
+async fn the_reader_ends_at_the_stop_in_the_backoff_and_in_an_opening() {
+    let slow = Backoff {
+        base: Duration::from_secs(30),
+        cap: Duration::from_secs(30),
+    };
+    let fake = FakeService::start(&["show"], "idle");
+    fake.refuse(Some(Purpose::Log), word::FULL);
+    let r = follow(&fake, slow);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    r._stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), r.task)
+        .await
+        .expect("ended in the backoff")
+        .unwrap();
+    let fake = FakeService::start(&["show"], "idle");
+    fake.with(|s| s.answer_delay = Duration::from_secs(60));
+    let r = follow(&fake, slow);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(logs(&fake), 0, "the opening is unanswered");
+    r._stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), r.task)
+        .await
+        .expect("ended in an opening")
+        .unwrap();
 }
 
 /// **The reader ends at the stop**, and where the stop's sender is gone.

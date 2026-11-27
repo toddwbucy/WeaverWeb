@@ -309,11 +309,8 @@ async fn a_drop_before_started_reads_the_run_by_its_verb() {
 /// **Nothing of its own after a drop, and the last run ended set aside**
 /// (the drop table's third row): an earlier `load` ended and is the
 /// service's last ended; a second `load` whose connection drops with
-/// nothing standing reads that run as not its own, by `last_known`, and
-/// answers `not_started`.
-///
-/// Perturbation (measured 2026-11-27): drop `last_known` from the reading
-/// with no id held, and the second `load` answers the first one's outcome.
+/// nothing standing reads that run as not its own, by the baseline its own
+/// connection read, and answers `not_started`.
 #[tokio::test]
 async fn a_drop_with_nothing_of_its_own_is_not_started() {
     let fake = FakeService::start(&["load"], "idle");
@@ -364,12 +361,21 @@ async fn a_restart_after_a_drop_is_unknown() {
 }
 
 /// **No socket answering for the verb's bound after a drop is `unknown`**
-/// (the fifth row), and the invocation ends, so the slot is freed.
+/// (the fifth row), and the invocation ends, so admin-con's slot is freed
+/// while the run may still stand: the service's own machine guards it,
+/// refusing the next verb `busy` while it stands. Once it has ended, a
+/// later `load` that drops before its grant is read takes nothing of that
+/// end as its own.
+///
+/// Perturbation (measured 2026-11-27): read a drop with no id held by the
+/// verb alone, the baseline set aside, and the later `load` answers the
+/// earlier run's outcome.
 #[tokio::test]
 async fn no_socket_for_the_bound_after_a_drop_is_unknown() {
     let fake = FakeService::start(&["load"], "idle");
+    let release = Arc::new(Notify::new());
     let mut script = Script::answer(Some("load"), json!({"kind": "loaded"}));
-    script.release = Some(Arc::new(Notify::new()));
+    script.release = Some(release.clone());
     script.cut = Cut::WhileRunning;
     fake.script(script);
     let (invoker, _) = invoker(&fake, Duration::from_millis(600));
@@ -380,7 +386,8 @@ async fn no_socket_for_the_bound_after_a_drop_is_unknown() {
     while fake.with(|s| s.ran.is_empty()) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    std::fs::remove_file(&fake.socket).unwrap();
+    let away = fake.socket.with_extension("away");
+    std::fs::rename(&fake.socket, &away).unwrap();
     let fault = tokio::time::timeout(SOON, running)
         .await
         .unwrap()
@@ -388,10 +395,107 @@ async fn no_socket_for_the_bound_after_a_drop_is_unknown() {
         .unwrap_err();
     assert_eq!(fault.kind, VerbFault::UNKNOWN, "{}", fault.message);
     assert!(fault.message.contains("no socket"), "{}", fault.message);
+    std::fs::rename(&away, &fake.socket).unwrap();
+    then_a_later_drop_takes_nothing_of_its_end(&fake, &invoker, &release).await;
+}
+
+/// After an exit that left a `load` standing: the next `load` is `busy`
+/// while it stands; once it ends, a `load` whose connection closes before
+/// its grant is read is `not_started`, not that end.
+async fn then_a_later_drop_takes_nothing_of_its_end(
+    fake: &FakeService,
+    invoker: &ServiceInvoker,
+    release: &Notify,
+) {
+    let busy = run(invoker, "load").await.unwrap_err();
+    assert_eq!(busy.kind, VerbFault::BUSY, "{}", busy.message);
+    release.notify_one();
+    while !fake.with(|s| s.runs.contains(&"end load".to_owned())) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    fake.script(Script::of(Some("load"), Act::Vanish));
+    let fault = run(invoker, "load").await.unwrap_err();
+    assert_eq!(fault.kind, VerbFault::NOT_STARTED, "{}", fault.message);
+}
+
+/// **A drop with no run id held, after a `show`, reads an earlier run's end
+/// as not its own** (section 8.4, the third reading): a `load` ends, a
+/// `show` runs, which is never kept as ended, and a `load` whose connection
+/// closes before its grant is read answers `not_started`; so does one asked
+/// by a connector that starts with the service already holding an end.
+///
+/// Perturbation (measured 2026-11-27): set the baseline aside, and each
+/// later `load` answers the first one's outcome.
+#[tokio::test]
+async fn a_drop_after_a_show_or_a_fresh_start_takes_no_earlier_end_as_its_own() {
+    let fake = FakeService::start(&["show", "load"], "idle");
+    let (invoker, _) = invoker(&fake, SOON);
+    assert!(run(&invoker, "load").await.is_ok());
+    assert!(run(&invoker, "show").await.is_ok());
+    fake.script(Script::of(Some("load"), Act::Vanish));
+    let fault = run(&invoker, "load").await.unwrap_err();
+    assert_eq!(fault.kind, VerbFault::NOT_STARTED, "{}", fault.message);
+    let (fresh, _) = self::invoker(&fake, SOON);
+    fake.script(Script::of(Some("load"), Act::Vanish));
+    let fault = run(&fresh, "load").await.unwrap_err();
+    assert_eq!(fault.kind, VerbFault::NOT_STARTED, "{}", fault.message);
+    assert_eq!(
+        fake.with(|s| s.runs.clone()),
+        ["start load", "end load", "start show", "end show"]
+    );
+}
+
+/// **A dropped `show` whose `started` arrived is `unknown`**, never
+/// `not_started`: a `show` is never standing nor kept as ended, so no `run`
+/// answer can say, and the held id proves it started.
+///
+/// Perturbation (measured 2026-11-27): send a dropped `show` to the drop
+/// table, and it answers `not_started`.
+#[tokio::test]
+async fn a_dropped_show_is_unknown() {
+    let fake = FakeService::start(&["show"], "idle");
+    let mut script = Script::of(Some("show"), Act::State);
+    script.cut = Cut::WhileRunning;
+    fake.script(script);
+    let (invoker, _) = invoker(&fake, SOON);
+    let fault = run(&invoker, "show").await.unwrap_err();
+    assert_eq!(fault.kind, VerbFault::UNKNOWN, "{}", fault.message);
+}
+
+/// **A refusal after `started`, or one by a word no verb's refusal holds,
+/// goes to the drop table**, since the run may stand: each is answered by
+/// the run's end, with its entry.
+///
+/// Perturbations (measured 2026-11-27): drop the guard on the held id, and
+/// the refusal after `started` answers `busy`; read every word but
+/// `ask_outstanding` as a refusal before the start, and the later word
+/// answers `not_started`.
+#[tokio::test]
+async fn a_refusal_after_started_or_by_an_unknown_word_reads_the_run() {
+    let fake = FakeService::start(&["load"], "idle");
+    let (invoker, entries) = invoker(&fake, SOON);
+    fake.script(Script::of(
+        Some("load"),
+        Act::RefuseAfterStart(Refused::new(word::BUSY, "after the start")),
+    ));
+    let after = run(&invoker, "load").await;
+    assert!(after.is_ok(), "{after:?}");
+    fake.script(Script::of(
+        Some("load"),
+        Act::RefuseTaken(Refused::new("a_later_word", "after taking the run")),
+    ));
+    let later = run(&invoker, "load").await;
+    assert!(later.is_ok(), "{later:?}");
+    assert_eq!(kinds(&entries), ["service_busy", "service_a_later_word"]);
+    assert_eq!(
+        fake.with(|s| s.runs.clone()),
+        ["start load", "end load", "start load", "end load"]
+    );
 }
 
 /// **A word that ends a poll is `unknown`, with its entry**, and a word
-/// that may pass waits for the next poll.
+/// that may pass waits for the next poll. The invocation ends, so the slot
+/// is freed while the run may stand, as after no socket.
 #[tokio::test]
 async fn a_poll_refused_for_good_is_unknown_and_a_passing_word_waits() {
     let fake = FakeService::start(&["load"], "idle");
@@ -419,7 +523,8 @@ async fn a_poll_refused_for_good_is_unknown_and_a_passing_word_waits() {
         .unwrap_err();
     assert_eq!(fault.kind, VerbFault::UNKNOWN);
     assert_eq!(kinds(&entries), ["service_name_refused"]);
-    release.notify_one();
+    fake.with(|s| s.refuse = None);
+    then_a_later_drop_takes_nothing_of_its_end(&fake, &invoker, &release).await;
 }
 
 // ---------- against the real listener: the slot and the stop ----------

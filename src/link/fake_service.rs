@@ -77,6 +77,15 @@ pub(crate) enum Act {
     Refuse(Refused),
     /// Granted and admitted, and the root program could not be started.
     StartFails,
+    /// The connection closes before the grant's read answers: nothing is
+    /// taken, so nothing stands and nothing ends.
+    Vanish,
+    /// Admitted, then this refusal on the connection before `started` and
+    /// a close, while the run goes on as `State` to its end: a later
+    /// service refusing with a word after taking a run.
+    RefuseTaken(Refused),
+    /// As `RefuseTaken`, the refusal sent after `started`.
+    RefuseAfterStart(Refused),
 }
 
 /// Where a scripted verb drops its control connection.
@@ -792,6 +801,23 @@ async fn run_verb(
         cut,
         ..
     } = script;
+    let act = match act {
+        Act::Vanish => {
+            state.lock().unwrap().held.retain(|h| h.run != run);
+            close(writer).await;
+            return;
+        }
+        Act::RefuseTaken(refusal) => {
+            say(writer, &refused(refusal)).await;
+            close(writer).await;
+            Act::State
+        }
+        other => other,
+    };
+    let (act, after_start) = match act {
+        Act::RefuseAfterStart(refusal) => (Act::State, Some(refusal)),
+        other => (other, None),
+    };
     if cut == Cut::Unstarted {
         close(writer).await;
     }
@@ -834,6 +860,10 @@ async fn run_verb(
         &to_line(&serde_json::json!({"started": {"run": run}})),
     )
     .await;
+    if let Some(refusal) = after_start {
+        say(writer, &refused(refusal)).await;
+        close(writer).await;
+    }
     if cut == Cut::WhileRunning {
         close(writer).await;
     }
@@ -874,7 +904,11 @@ async fn run_verb(
                 verb: verb.clone(),
                 detail,
             }),
-            Act::Refuse(_) | Act::StartFails => unreachable!("answered before the start"),
+            Act::Refuse(_)
+            | Act::StartFails
+            | Act::Vanish
+            | Act::RefuseTaken(_)
+            | Act::RefuseAfterStart(_) => unreachable!("answered before the start"),
         };
         // **Kept as the last ended**, unless a `show`, or a run of a start
         // the service has since forgotten.

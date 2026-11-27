@@ -5465,13 +5465,18 @@ opening's or `grants_unread`, declares the empty ceiling with the
 `ceiling_not_read` entry naming the word, within the hello's 10-second
 bound over the opening and the ask together.
 
-**The connector after a drop.** admin-con asks one verb at a time and keeps
-`last_known`, the id of the last run it learned had ended, in its memory
-alone. Where a verb's connection closes before its final line (or the
-service refuses it `ask_outstanding`, or sends a line no verb's), the
-invocation keeps admin-con's slot and asks the service `run` every 2
-seconds on a fresh connection, reading its own run by the id `started`
-named or, with none held, as a run of its verb that is not `last_known`:
+**The connector after a drop.** admin-con asks one verb at a time, and
+**before every verb but `show` its own connection first asks `run`**: that
+answer's `ended` and `standing` are the baseline, what the service held
+before the ask, so nothing admin-con remembers between asks (a `show`, its
+own restart, an earlier exit of the table below) can make the reading
+stale. A failure of the baseline is `not_started`, the verb never asked.
+Where a verb's connection closes before its final line (or the service
+refuses it `ask_outstanding`, refuses it after `started`, refuses it with a
+word no verb's refusal holds, or sends a line no verb's), the invocation
+keeps admin-con's slot and asks the service `run` every 2 seconds on a
+fresh connection, reading its own run by the id `started` named or, with
+none held, as a run of its verb that the baseline did not hold:
 
 | The `run` answer | admin-con |
 |---|---|
@@ -5479,9 +5484,18 @@ named or, with none held, as a run of its verb that is not `last_known`:
 | same `instance`, `ended` its run | answers that `ran` or `fault`, and frees the slot |
 | same `instance`, nothing of its own | answers `not_started`, and frees the slot |
 | another `instance` | answers `unknown`, and frees the slot; the next `show` settles it |
-| no socket answering for the verb's bound | answers `unknown` |
+| no socket answering for the verb's bound | answers `unknown`, and frees the slot |
 | a poll refused `full` or `opening_late` | waits for the next poll |
-| a poll refused with any other word | answers `unknown`, with an entry |
+| a poll refused with any other word | answers `unknown`, with an entry, and frees the slot |
+
+**The first row holds the slot only while admin-con can read the run.**
+Where the service stops answering, or refuses the polls for good, the run
+may still stand, and the slot is freed: holding it on a service admin-con
+cannot reach would hold every verb with no end, and the service's own
+machine guards the run, refusing the next verb `busy` while it stands.
+**A `show` is never listed as standing nor kept as ended** (section 8.4),
+so a dropped `show` is `unknown` at once, never polled and never
+`not_started`.
 
 An orderly stop waits, within its grace, for the slot that such an
 invocation holds, and invokes nothing. **The person never crosses to the
@@ -8038,7 +8052,7 @@ two connectors report.
 | the WebAuthn library links into the server binary alone | measurement and perturbation in `tests/connectors_link.rs`: `ldd` on the connectors as `cargo test` builds them finds no `libcrypto`, and on the server binary finds it, which shows the reading; and the package's normal graph without the default features holds no `openssl-sys` and no `webauthn-rs`, the build CLAUDE.md gives for agent boxes. Make the library a dependency the feature does not carry, and the graph holds it |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the weaver-admin service's `grants` answer names, among the eight verbs (section 7.2) | perturbation in `src/link/service_invoker_tests.rs`, against the fake service, `the_grants_are_the_services_list_and_every_refusal_names_its_word`: answer `grants` with the eight verbs whatever the service names, and a verb it does not grant is declared (measured 2026-11-27) |
-| a verb asks the weaver-admin service on a control connection of its own, every word that can answer it placed, and after a drop its run read by the service's `run` answer (section 7.2) | tests in `src/link/service_invoker_tests.rs` against the fake service, `every_word_at_a_verb_is_placed` reading the fourteen words a verb can meet and each row of the drop table in a test of its own; perturbations: read the service's `busy` as `fault`, and `every_word_at_a_verb_is_placed` is red; read another `instance` as "did not run", and `a_restart_after_a_drop_is_unknown` answers `not_started`; drop `last_known` from the reading with no id held, and `a_drop_with_nothing_of_its_own_is_not_started` answers the earlier run's outcome (each measured 2026-11-27) |
+| a verb asks the weaver-admin service on a control connection of its own, every word that can answer it placed, and after a drop its run read by the service's `run` answer (section 7.2) | tests in `src/link/service_invoker_tests.rs` against the fake service, `every_word_at_a_verb_is_placed` reading the fourteen words a verb can meet and each row of the drop table in a test of its own; perturbations: read the service's `busy` as `fault`, and `every_word_at_a_verb_is_placed` is red; read another `instance` as "did not run", and `a_restart_after_a_drop_is_unknown` answers `not_started`; set the baseline aside, reading a drop with no id held by its verb alone, and `a_drop_after_a_show_or_a_fresh_start_takes_no_earlier_end_as_its_own`, `no_socket_for_the_bound_after_a_drop_is_unknown` and `a_poll_refused_for_good_is_unknown_and_a_passing_word_waits` each answer an earlier run's outcome as the later `load`'s; send a dropped `show` to the drop table, and `a_dropped_show_is_unknown` answers `not_started`; in `a_refusal_after_started_or_by_an_unknown_word_reads_the_run`, drop the guard on the held id, and a refusal after `started` answers `busy`, and read every word but `ask_outstanding` as a refusal before the start, and a word no verb's refusal holds answers `not_started` (each measured 2026-11-27) |
 | a verb the service refuses `not_granted` is audited `failed`, never run, and raises a failure rather than an unknown (sections 2.13, 2.14) | perturbation in `src/link/service_invoker_tests.rs`, against the real listener, `not_granted_is_audited_as_never_run`: leave `not_granted` out of the listener's `NEVER_RAN`, and the outcome stays unwritten (measured 2026-11-27) |
 | a connector never acts on the agent: admin-con's stop invokes nothing | perturbation in `src/link/admin_con_tests.rs`: restore the orderly stop's `unload`, and a shutdown with `unload` in the ceiling invokes it. And against a fake `sudo` in `src/link/sudo_invoker_tests.rs`, where the rules grant `unload`, the stop runs no line, and with a child in flight it waits for the child and runs none |
 | raising an alert never waits on the store or the log | perturbation in `src/alerts_tests.rs`: wait on the full queue in the raise instead of dropping, and with the worker held a refused verb's answer is held behind it and the raises time out |

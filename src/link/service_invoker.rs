@@ -20,16 +20,23 @@
 //! own defect or its config's adds a connector failure entry, which the
 //! server raises. `not_granted` and `busy` keep kinds of their own.
 //!
+//! **A baseline before every verb but `show`**: the verb's own connection
+//! first asks `run`, and that answer's `ended` and `standing` are what the
+//! service already held, so nothing admin-con remembers between asks (a
+//! `show`, its own restart, an exit of the drop table) can make the reading
+//! after a drop stale.
+//!
 //! **After a drop** (the connection closes with the verb outstanding, its
 //! run possibly standing), the invocation keeps admin-con's slot and asks
 //! the service `run` every `POLL` on a fresh connection, reading its own
-//! run by the id `started` named, or with none held, by its verb, the last
-//! run it learned had ended (`last_known`) set aside. It answers the run's
-//! final line when the run has ended, `not_started` when the service holds
-//! nothing of it, and `unknown` when the service has restarted under
-//! another `instance` or no socket has answered for the verb's bound. While
-//! the run stands it polls on, so admin-con's bound answers `unknown` and
-//! the slot is held until the run ends.
+//! run by the id `started` named, or with none held, as a run of its verb
+//! that the baseline did not hold. It answers the run's final line when the
+//! run has ended, `not_started` when the service holds nothing of it, and
+//! `unknown` when the service has restarted under another `instance`, no
+//! socket has answered for the verb's bound, or a poll is refused for good.
+//! While the run stands it polls on, so admin-con's bound answers `unknown`
+//! and the slot is held until the run ends. A `show` is never listed as
+//! standing or kept as ended, so a dropped `show` is `unknown` at once.
 
 use crate::link::admin_con::Invoker;
 use crate::link::admin_service::{
@@ -39,7 +46,7 @@ use crate::link::admin_service::{
 use crate::link::entries::Entries;
 use crate::link::frames::{Principal, VerbFault, VerbOutcome};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 /// **How often a `run` is asked after a drop**, the brief's cadence.
@@ -85,9 +92,6 @@ pub struct ServiceInvoker {
     /// The verb's bound: a drop with no socket answering this long is
     /// `unknown`, the slot freed.
     verb_bound: Duration,
-    /// The id of the last run admin-con learned had ended, in memory alone:
-    /// a restarted admin-con holds no outstanding ask, so it needs none.
-    last_known: Arc<Mutex<Option<String>>>,
     entries: Arc<OnceLock<Entries>>,
     /// The poll's cadence: `POLL`, settable in code so a test can reach it.
     pub poll: Duration,
@@ -105,11 +109,42 @@ impl std::fmt::Debug for ServiceInvoker {
 /// How a verb's own connection ended short of its final line: the run it
 /// may have left standing, read after.
 struct Dropped {
-    /// The run `started` named, if it came.
+    /// The run `started` named, if it came, or the standing run of the verb
+    /// the baseline did not hold, once a poll finds it.
     run: Option<String>,
     /// The service's start the verb's connection opened under.
     instance: String,
+    /// What the service held just before the verb's ask.
+    baseline: Baseline,
 }
+
+/// **The service's runs just before a verb's ask**, from a `run` on the
+/// verb's own connection: the run kept as ended, and every run standing.
+#[derive(Default)]
+struct Baseline {
+    ended: Option<String>,
+    standing: Vec<String>,
+}
+
+/// **Every word a verb's ask can be refused with before `started`**
+/// (`weaver-admin-operator-contract` section 8.2): another word, from a
+/// later service, may follow a run's admission, so it goes to the drop
+/// table.
+const VERB_WORDS: [&str; 13] = [
+    word::OPENING_MALFORMED,
+    word::OPENING_LATE,
+    word::VERSION_UNKNOWN,
+    word::PURPOSE_UNKNOWN,
+    word::NAME_REFUSED,
+    word::FULL,
+    word::ASK_UNKNOWN,
+    word::ASK_MALFORMED,
+    word::VERB_UNKNOWN,
+    word::NOT_GRANTED,
+    word::GRANT_UNREAD,
+    word::BUSY,
+    word::NOT_STARTED,
+];
 
 impl ServiceInvoker {
     /// An invoker asking the service at `socket` for the agent `agent`.
@@ -118,7 +153,6 @@ impl ServiceInvoker {
             socket: socket.to_owned(),
             agent: agent.to_owned(),
             verb_bound,
-            last_known: Arc::new(Mutex::new(None)),
             entries: Arc::new(OnceLock::new()),
             poll: POLL,
         }
@@ -179,9 +213,8 @@ impl ServiceInvoker {
         }
     }
 
-    /// The outcome of a final line, `last_known` set to its run.
+    /// The outcome of a final line.
     fn ended(&self, agent: &str, last: Final) -> Result<VerbOutcome, VerbFault> {
-        *self.last_known.lock().unwrap() = Some(last.run().to_owned());
         match last {
             Final::Ran(ran) => {
                 if ran.stderr_cut {
@@ -238,9 +271,48 @@ impl ServiceInvoker {
                 return Ok(Err(not_started(message)));
             }
         };
+        // **The baseline**, on the verb's own connection, before its ask:
+        // nothing is asked yet, so any failure here is `not_started`.
+        let baseline = if verb == "show" {
+            Baseline::default()
+        } else {
+            let read = match conn.ask(&Ask::Run {}).await {
+                Err(e) => Err(format!("the baseline's run ask was not sent ({e})")),
+                Ok(()) => match tokio::time::timeout(ANSWER_WAIT, conn.next_control()).await {
+                    Ok(Ok(Some(ControlLine::Run(answer)))) if answer.instance == conn.instance => {
+                        Ok(Baseline {
+                            ended: answer.ended.as_ref().map(|e| e.run().to_owned()),
+                            standing: answer.standing.into_iter().map(|s| s.run).collect(),
+                        })
+                    }
+                    Ok(Ok(Some(ControlLine::Refused(refusal)))) => {
+                        let message = format!(
+                            "the service refused the baseline's run ask, {}: {}; {verb} was not asked and did not run",
+                            refusal.word, refusal.detail
+                        );
+                        self.entry(&entry_kind(&refusal.word), message.clone());
+                        return Ok(Err(not_started(message)));
+                    }
+                    Ok(Ok(other)) => Err(format!("the baseline's run ask was answered {other:?}")),
+                    Ok(Err(e)) => Err(format!("the baseline's run ask carried {e}")),
+                    Err(_) => Err(format!(
+                        "the baseline's run ask was not answered within {ANSWER_WAIT:?}"
+                    )),
+                },
+            };
+            match read {
+                Ok(baseline) => baseline,
+                Err(why) => {
+                    let message = format!("{why}; {verb} was not asked and did not run");
+                    self.entry("service_malformed", message.clone());
+                    return Ok(Err(not_started(message)));
+                }
+            }
+        };
         let mut dropped = Dropped {
             run: None,
             instance: conn.instance.clone(),
+            baseline,
         };
         let ask = Ask::Verb {
             verb: verb.to_owned(),
@@ -262,13 +334,14 @@ impl ServiceInvoker {
                     return Ok(self.ended(agent, Final::Fault(fault)));
                 }
                 Ok(Some(ControlLine::Refused(refusal)))
-                    if dropped.run.is_none() && refusal.word != word::ASK_OUTSTANDING =>
+                    if dropped.run.is_none() && VERB_WORDS.contains(&refusal.word.as_str()) =>
                 {
                     return Ok(Err(self.refused_before_start(verb, &refusal)));
                 }
                 Ok(Some(ControlLine::Refused(refusal))) => {
-                    // `ask_outstanding`, or a refusal after `started`: the
-                    // run may stand, so its `run` answer says.
+                    // `ask_outstanding`, a refusal after `started`, or a
+                    // word no verb's refusal holds: the run may stand, so
+                    // its `run` answer says.
                     self.entry(
                         &entry_kind(&refusal.word),
                         format!(
@@ -327,7 +400,7 @@ impl ServiceInvoker {
         &self,
         agent: &str,
         verb: &str,
-        dropped: Dropped,
+        mut dropped: Dropped,
     ) -> Result<VerbOutcome, VerbFault> {
         let fault = |kind: &str, message: String| VerbFault {
             kind: kind.into(),
@@ -374,12 +447,17 @@ impl ServiceInvoker {
                     ),
                 ));
             }
-            let last_known = self.last_known.lock().unwrap().clone();
+            let baseline = &dropped.baseline;
             let mine = |run: &str, of: &str| match &dropped.run {
                 Some(id) => run == id,
-                None => of == verb && last_known.as_deref() != Some(run),
+                None => {
+                    of == verb
+                        && baseline.ended.as_deref() != Some(run)
+                        && !baseline.standing.iter().any(|b| b == run)
+                }
             };
-            if answer.standing.iter().any(|s| mine(&s.run, &s.verb)) {
+            if let Some(standing) = answer.standing.iter().find(|s| mine(&s.run, &s.verb)) {
+                dropped.run = Some(standing.run.clone());
                 continue;
             }
             if let Some(last) = answer.ended
@@ -451,6 +529,12 @@ impl Invoker for ServiceInvoker {
         tracing::info!("{agent}: asking the service {verb}, for {principal:?}");
         match self.ask_verb(agent, verb, principal).await {
             Ok(done) => done,
+            // **A `show` is never standing nor kept as ended** (section
+            // 8.4), so no `run` answer can say what came of one.
+            Err(_) if verb == "show" => Err(VerbFault {
+                kind: VerbFault::UNKNOWN.into(),
+                message: "show's connection dropped with the verb outstanding; a show is never listed as standing or ended, so whether it ran is unknown".into(),
+            }),
             Err(dropped) => self.after_drop(agent, verb, dropped).await,
         }
     }

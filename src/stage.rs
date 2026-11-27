@@ -4,7 +4,8 @@
 //! **The install's staging tool** (Spec 8.1): it reads a parameter file the
 //! operator keeps outside the repository, renders the three units from the
 //! templates under `install/units/`, composes each agent's two connector
-//! configs from `register`'s handover files and the box facts, and writes
+//! configs from `register`'s handover files and the box facts, beside each
+//! connector's key file in a folder of its plane's group, and writes
 //! them with a manifest into a directory the operator names. **An appliance
 //! image stages the connectors' half alone**: `[connectors]` with no
 //! handover and no agent places the two programs and renders their
@@ -20,11 +21,12 @@
 //! found.
 
 use crate::link::admin_con::{AdminConConfig, MAX_BACKFILL_BYTES, STOP_GRACE};
+use crate::link::client::Trust;
 use crate::link::gate_con::GateConConfig;
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -85,6 +87,11 @@ pub struct Server {
 pub struct Connectors {
     pub gate_account: String,
     pub admin_account: String,
+    /// **The group each connector runs as and reads its config and key
+    /// through** (the brief of 2026-11-27, child 6): its unit's `Group=`,
+    /// and the group of its folder, config and key.
+    pub gate_group: String,
+    pub admin_group: String,
     /// admin-con's `PATH`: absolute directories joined by `:`.
     pub admin_path: String,
     pub gate_con_binary: String,
@@ -211,6 +218,7 @@ pub struct Entry {
     pub source: PathBuf,
     pub destination: PathBuf,
     pub owner: String,
+    pub group: String,
     pub mode: &'static str,
     pub sha256: Option<String>,
 }
@@ -226,7 +234,7 @@ impl Entry {
     /// order; a directory's source and sum are `-`.
     fn line(&self) -> String {
         format!(
-            "{}\t{}\t{}\t{}\t-\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             match self.kind {
                 Kind::Dir => "dir",
                 Kind::File => "file",
@@ -238,6 +246,7 @@ impl Entry {
             },
             self.destination.display(),
             self.owner,
+            self.group,
             self.mode,
             self.sha256.as_deref().unwrap_or("-"),
         )
@@ -254,6 +263,7 @@ enum Content {
 struct PlannedFile {
     destination: PathBuf,
     owner: String,
+    group: String,
     mode: &'static str,
     content: Content,
     /// The connector config this file is, checked by its loader once staged.
@@ -307,11 +317,17 @@ pub fn server_unit(account: &str, binaries: &str, config_root: &str) -> anyhow::
 }
 
 /// The rendered gate-con template.
-pub fn gate_unit(account: &str, binaries: &str, config_root: &str) -> anyhow::Result<String> {
+pub fn gate_unit(
+    account: &str,
+    group: &str,
+    binaries: &str,
+    config_root: &str,
+) -> anyhow::Result<String> {
     render(
         GATE_TEMPLATE,
         &[
             ("ACCOUNT", account),
+            ("GROUP", group),
             ("BINARIES", binaries),
             ("CONFIG_ROOT", config_root),
         ],
@@ -321,6 +337,7 @@ pub fn gate_unit(account: &str, binaries: &str, config_root: &str) -> anyhow::Re
 /// The rendered admin-con template.
 pub fn admin_unit(
     account: &str,
+    group: &str,
     binaries: &str,
     config_root: &str,
     admin_path: &str,
@@ -329,6 +346,7 @@ pub fn admin_unit(
         ADMIN_TEMPLATE,
         &[
             ("ACCOUNT", account),
+            ("GROUP", group),
             ("BINARIES", binaries),
             ("CONFIG_ROOT", config_root),
             ("ADMIN_PATH", admin_path),
@@ -442,7 +460,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 /// **A file the tool reads, opened without following a symlink** (Spec
 /// 8.1), as the connectors' trust rule reads a config
-/// (`client::read_private`): open with `O_NOFOLLOW` and `O_NONBLOCK`, then
+/// (`client::read_trusted`): open with `O_NOFOLLOW` and `O_NONBLOCK`, then
 /// judge that descriptor and read it, so the check and the read are one look
 /// at the name and a FIFO never blocks the open.
 fn read_regular(what: &str, path: &Path) -> anyhow::Result<Vec<u8>> {
@@ -492,11 +510,11 @@ fn program(member: &str, p: &str) -> anyhow::Result<(PathBuf, String)> {
     Ok((path, sha256_hex(&bytes)))
 }
 
-/// **A handover file `register` wrote, held to the connectors' own trust
-/// rule** (Spec 8.1, `client::read_private`): a regular file, never a
+/// **A handover file `register` wrote, held to a rule of its own** (Spec
+/// 8.1): a regular file, never a
 /// symlink, the invoking user's, at `0600` or tighter, judged on the
-/// descriptor it is read from. It names the server the connector will trust
-/// and carries the connector's key, so the staged copy's `0600` must not
+/// descriptor it is read from. A config names the server the connector will
+/// trust and a key file is the connector's key, so the staged copy must not
 /// stand for a source anyone else could have written or read. A handover
 /// downloaded through a browser arrives under the browser's umask, so the
 /// refusal names the mode found and the operator tightens it.
@@ -519,6 +537,41 @@ fn handover_file(path: &Path, euid: u32) -> anyhow::Result<String> {
     }
     let bytes = read_all(what, path, file)?;
     String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("{what} {} is not UTF-8", path.display()))
+}
+
+/// **A connector's key file `register` wrote, beside its config**: held to
+/// `handover_file`'s rule, one PKCS #8 ECDSA P-256 PEM block, and the
+/// config's certificate over it, checked before anything is written. A
+/// refusal never prints the key.
+fn handover_key(path: &Path, config: &str, euid: u32) -> anyhow::Result<String> {
+    let key = handover_file(path, euid)?;
+    if !crate::link::key_config::one_key(&key) {
+        bail!(
+            "the handover key {} is not one PKCS #8 ECDSA P-256 PEM block",
+            path.display()
+        );
+    }
+    let certificate = config
+        .parse::<toml::Table>()
+        .ok()
+        .and_then(|t| {
+            t.get("certificate")
+                .and_then(|c| c.as_str())
+                .map(str::to_owned)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "the handover config beside {} carries no certificate",
+                path.display()
+            )
+        })?;
+    if !crate::link::key_config::over_key(&certificate, &key) {
+        bail!(
+            "the handover config's certificate is not over the key in {}",
+            path.display()
+        );
+    }
+    Ok(key)
 }
 
 /// **`<out>` holds keys** (Spec 8.1): absent, or an empty directory of the
@@ -607,10 +660,15 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
         bail!("the parameter file stages nothing: give [server], or [connectors]");
     }
     let mut dirs: BTreeSet<PathBuf> = BTreeSet::new();
+    // **Each connector's folder**: root's, of the plane's group, 0750, as
+    // the connector's trust rule requires of the folder holding its config
+    // and key (the brief of 2026-11-27, child 6).
+    let mut plane_dirs: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut files: Vec<PlannedFile> = Vec::new();
     let root_file = |destination: PathBuf, mode: &'static str, content: Content| PlannedFile {
         destination,
         owner: "root".to_owned(),
+        group: "-".to_owned(),
         mode,
         content,
         config: None,
@@ -640,6 +698,8 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
     if let Some(c) = &params.connectors {
         account_ok("connectors.gate_account", &c.gate_account)?;
         account_ok("connectors.admin_account", &c.admin_account)?;
+        account_ok("connectors.gate_group", &c.gate_group)?;
+        account_ok("connectors.admin_group", &c.admin_group)?;
         admin_path_ok(&c.admin_path)?;
         // **A handover goes with an agent and only then** (Spec 8.1; the
         // operator's rulings of 2026-11-14): an appliance image stages the
@@ -669,9 +729,15 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
             "0755",
             Content::Program(admin_bin, admin_sum),
         ));
-        let gate = gate_unit(&c.gate_account, &loc.binaries, &loc.config_root)?;
+        let gate = gate_unit(
+            &c.gate_account,
+            &c.gate_group,
+            &loc.binaries,
+            &loc.config_root,
+        )?;
         let admin = admin_unit(
             &c.admin_account,
+            &c.admin_group,
             &loc.binaries,
             &loc.config_root,
             &c.admin_path,
@@ -706,11 +772,24 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
             }
             let from = handover.join(&agent.r#box).join(n);
             let gate_text = handover_file(&from.join("gate-con.toml"), euid)?;
+            let gate_key = handover_key(&from.join("gate-con.key"), &gate_text, euid)?;
             let admin_text = handover_file(&from.join("admin-con.toml"), euid)?;
+            let admin_key = handover_key(&from.join("admin-con.key"), &admin_text, euid)?;
+
+            let dir = connectors.join(n);
+            dirs.insert(dir.clone());
+            let gate_dir = dir.join("gate");
+            let admin_dir = dir.join("admin");
+            plane_dirs.insert(gate_dir.clone(), c.gate_group.clone());
+            plane_dirs.insert(admin_dir.clone(), c.admin_group.clone());
+            let gate_key_at = gate_dir.join("gate-con.key");
+            let admin_key_at = admin_dir.join("admin-con.key");
 
             let mut gate_facts = toml::Table::new();
+            gate_facts.insert("key_file".into(), gate_key_at.display().to_string().into());
             gate_facts.insert("gate_socket".into(), agent.gate_socket.clone().into());
             let mut admin_facts = toml::Table::new();
+            admin_facts.insert("key_file".into(), admin_key_at.display().to_string().into());
             admin_facts.insert("admin_socket".into(), agent.admin_socket.clone().into());
             let grace = agent.stop_grace_secs.unwrap_or(STOP_GRACE.as_secs());
             for (m, v) in [
@@ -735,22 +814,41 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
                 admin_facts.insert("backfill_bytes".into(), b.into());
             }
 
-            let dir = connectors.join(n);
-            dirs.insert(dir.clone());
-            files.push(PlannedFile {
-                destination: dir.join("gate-con.toml"),
-                owner: c.gate_account.clone(),
-                mode: "0600",
-                content: Content::Staged(compose(&gate_text, gate_facts).into_bytes()),
-                config: Some((Plane::Gate, n.clone())),
-            });
-            files.push(PlannedFile {
-                destination: dir.join("admin-con.toml"),
-                owner: c.admin_account.clone(),
-                mode: "0600",
-                content: Content::Staged(compose(&admin_text, admin_facts).into_bytes()),
-                config: Some((Plane::Admin, n.clone())),
-            });
+            // **Root's, of the plane's group, at 0640** (the brief of
+            // 2026-11-27, child 6): the connector reads them and writes
+            // neither.
+            let laid = |destination: PathBuf, group: &str, content: Vec<u8>, config| PlannedFile {
+                destination,
+                owner: "root".to_owned(),
+                group: group.to_owned(),
+                mode: "0640",
+                content: Content::Staged(content),
+                config,
+            };
+            files.push(laid(
+                gate_dir.join("gate-con.toml"),
+                &c.gate_group,
+                compose(&gate_text, gate_facts).into_bytes(),
+                Some((Plane::Gate, n.clone())),
+            ));
+            files.push(laid(
+                gate_key_at,
+                &c.gate_group,
+                gate_key.into_bytes(),
+                None,
+            ));
+            files.push(laid(
+                admin_dir.join("admin-con.toml"),
+                &c.admin_group,
+                compose(&admin_text, admin_facts).into_bytes(),
+                Some((Plane::Admin, n.clone())),
+            ));
+            files.push(laid(
+                admin_key_at,
+                &c.admin_group,
+                admin_key.into_bytes(),
+                None,
+            ));
             let drop_in = units.join(format!("weaver-web-admin-con@{n}.service.d"));
             dirs.insert(drop_in.clone());
             files.push(root_file(
@@ -765,6 +863,7 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
     // destination (Spec 8.1): a program is not copied into the staged tree,
     // so nothing there would collide, and the manifest would list a path as
     // both, which no order applies.
+    dirs.extend(plane_dirs.keys().cloned());
     for f in &files {
         let d = &f.destination;
         if dirs.contains(d) {
@@ -792,13 +891,17 @@ fn plan(params: &Params, euid: u32) -> anyhow::Result<(Vec<Entry>, Vec<PlannedFi
     dirs.sort_by_key(|d| (d.components().count(), d.clone()));
     let dirs = dirs
         .into_iter()
-        .map(|d| Entry {
-            kind: Kind::Dir,
-            source: PathBuf::new(),
-            destination: d,
-            owner: "root".to_owned(),
-            mode: "0755",
-            sha256: None,
+        .map(|d| {
+            let plane = plane_dirs.get(&d);
+            Entry {
+                kind: Kind::Dir,
+                source: PathBuf::new(),
+                owner: "root".to_owned(),
+                group: plane.cloned().unwrap_or_else(|| "-".to_owned()),
+                mode: if plane.is_some() { "0750" } else { "0755" },
+                destination: d,
+                sha256: None,
+            }
         })
         .collect();
     Ok((dirs, files))
@@ -857,9 +960,19 @@ fn write(
                 f.write_all(bytes)?;
                 f.sync_all()?;
                 if let Some((plane, name)) = &file.config {
+                    // The staged copy is the invoking user's, and its key is
+                    // laid at `key_file` only when the manifest is applied,
+                    // so the config is loaded alone; its key was checked
+                    // against its certificate before any write
+                    // (`handover_key`).
+                    let trust = Trust::invoking();
                     let agent = match plane {
-                        Plane::Gate => GateConConfig::load(&staged).map(|c| c.link.agent),
-                        Plane::Admin => AdminConConfig::load(&staged).map(|c| c.link.agent),
+                        Plane::Gate => {
+                            GateConConfig::load_unkeyed(&staged, &trust).map(|c| c.link.agent)
+                        }
+                        Plane::Admin => {
+                            AdminConConfig::load_unkeyed(&staged, &trust).map(|c| c.link.agent)
+                        }
                     }
                     .with_context(|| {
                         format!(
@@ -882,6 +995,7 @@ fn write(
             source,
             destination: file.destination.clone(),
             owner: file.owner.clone(),
+            group: file.group.clone(),
             mode: file.mode,
             sha256: Some(sha256),
         });

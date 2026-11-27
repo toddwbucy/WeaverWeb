@@ -34,9 +34,13 @@ use tokio::task::JoinHandle;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 
-/// The bound on a connector's config file: it holds a key and two
-/// certificates, a few KiB, so anything near this is not a config.
+/// The bound on a connector's config file: it holds two certificates and
+/// a few members, a few KiB, so anything near this is not a config.
 pub(crate) const CONFIG_BOUND: u64 = 1024 * 1024;
+
+/// The bound on a connector's key file: one PEM block of a P-256 key, a few
+/// hundred bytes.
+pub(crate) const KEY_BOUND: u64 = 64 * 1024;
 
 /// The bound on dialing, the handshake, the hello and its answer: the
 /// server's own handshake bound.
@@ -45,74 +49,281 @@ pub const HELLO_SECS: u64 = 10;
 /// The frames a connection may hold queued for its writer.
 const WRITE_QUEUE: usize = 16;
 
-/// Read a config that carries a private key, **refusing one another party
-/// could read or swap**: opened without following a symlink (and without
-/// blocking, so a FIFO planted at the path cannot hang the start), then
-/// checked by its descriptor, not its path, to be a regular file owned by
-/// the invoking uid with no permission bit outside 0600, and read under a
-/// bound. The directories above it are the operator's, as `--out`'s are
-/// for the register verb.
+/// **Whose files a connector reads its config and key from** (Spec 8.1,
+/// the brief of 2026-11-27, child 6): the owner each file and its folder
+/// must have, and the group each file must have, the connector's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Trust {
+    pub owner: libc::uid_t,
+    pub group: libc::gid_t,
+}
+
+impl Trust {
+    /// **The rule a connector reads under**: root's files, read through its
+    /// own effective group. A test build takes its own uid as the owner,
+    /// since a test makes no file of root's; a test of the root rule names
+    /// owner 0 itself.
+    pub fn connector() -> Self {
+        // SAFETY: getegid and geteuid take nothing and cannot fail.
+        let group = unsafe { libc::getegid() };
+        #[cfg(not(test))]
+        let owner = 0;
+        #[cfg(test)]
+        let owner = unsafe { libc::geteuid() };
+        Self { owner, group }
+    }
+
+    /// The invoking user's own files and group: the staging tool, which
+    /// runs unprivileged and checks what it composes before it is laid.
+    pub fn invoking() -> Self {
+        // SAFETY: as above.
+        unsafe {
+            Self {
+                owner: libc::geteuid(),
+                group: libc::getegid(),
+            }
+        }
+    }
+}
+
+/// **Which file a read is of**: a config, whose access list may grant read
+/// to named parties, or a key, which no party beyond the three base
+/// entries reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Held {
+    Config,
+    Key,
+}
+
+/// Read a connector's config under the rule a connector reads it by
+/// (`read_trusted`, `Trust::connector`).
 pub fn read_private(path: &Path) -> anyhow::Result<String> {
+    read_trusted(path, Held::Config, &Trust::connector())
+}
+
+// The access list's extended attribute, its version and its tags
+// (acl_ea.h).
+const ACL_XATTR: &[u8] = b"system.posix_acl_access\0";
+const ACL_VERSION: u32 = 2;
+const ACL_USER: u16 = 0x02;
+const ACL_GROUP_OBJ: u16 = 0x04;
+const ACL_GROUP: u16 = 0x08;
+const ACL_MASK: u16 = 0x10;
+const ACL_READ: u16 = 0x04;
+
+/// **Read a connector's config or key, refusing one another party could
+/// write, swap or, for a key, read** (the brief of 2026-11-27, child 6).
+/// Each check is made by descriptor: the folder is opened first without
+/// following a symlink, root's (`trust.owner`), of the connector's group or
+/// root's, writable by no group or other and nothing for others; then the
+/// file under it with `openat`, without following a symlink and without
+/// blocking, so a FIFO planted at the path cannot hang the start: a regular
+/// file, `trust.owner`'s, of the connector's group, no bit outside 0640,
+/// and its access list read as well as its mode, since on a file that
+/// carries one the mode's group bits show the mask. A key carries no entry
+/// beyond the three base ones; a config's named entries grant read alone.
+/// Both descriptors are judged, the file's first, before a byte is read.
+/// Read under its bound.
+pub fn read_trusted(path: &Path, held: Held, trust: &Trust) -> anyhow::Result<String> {
     use std::io::Read;
-    let file = open_private(path, false)?;
+    let file = open_trusted(path, held, trust)?;
+    let bound = match held {
+        Held::Config => CONFIG_BOUND,
+        Held::Key => KEY_BOUND,
+    };
     let mut content = String::new();
-    file.take(CONFIG_BOUND + 1)
+    file.take(bound + 1)
         .read_to_string(&mut content)
         .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
-    if content.len() as u64 > CONFIG_BOUND {
+    if content.len() as u64 > bound {
+        let what = match held {
+            Held::Config => "config",
+            Held::Key => "key",
+        };
         anyhow::bail!(
-            "{} passes {CONFIG_BOUND} bytes and is not a connector's config",
+            "{} passes {bound} bytes and is not a connector's {what}",
             path.display()
         );
     }
     Ok(content)
 }
 
-/// **Open a config that carries a private key by `read_private`'s rule**,
-/// for reading, and for writing too where `write` asks it (`adopt`
-/// completes the config in place, Spec 8.2): no symlink followed, no
-/// blocking open, and by its descriptor a regular file of the invoking
-/// uid with no permission bit outside 0600.
-pub fn open_private(path: &Path, write: bool) -> anyhow::Result<std::fs::File> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(write)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|e| match e.raw_os_error() {
-            Some(libc::ELOOP) => anyhow::anyhow!(
-                "{} is a symlink, and a config carrying a key is read through no symlink",
-                path.display()
+/// Open `path` by `read_trusted`'s rule, for reading.
+fn open_trusted(path: &Path, held: Held, trust: &Trust) -> anyhow::Result<std::fs::File> {
+    use std::ffi::CString;
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let symlink = |at: &Path| {
+        anyhow::anyhow!(
+            "{} is a symlink, and a file carrying or naming a key is read through no symlink",
+            at.display()
+        )
+    };
+    let folder = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("{} names no file", path.display()))?;
+    let c = |p: &[u8]| {
+        CString::new(p).map_err(|_| anyhow::anyhow!("{} holds a NUL byte", path.display()))
+    };
+    let folder_c = c(folder.as_os_str().as_bytes())?;
+    // SAFETY: a NUL-terminated path; the descriptor is owned at once.
+    let dir = unsafe {
+        libc::open(
+            folder_c.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if dir < 0 {
+        let e = std::io::Error::last_os_error();
+        return Err(match e.raw_os_error() {
+            Some(libc::ELOOP) => symlink(folder),
+            Some(libc::ENOTDIR) => anyhow::anyhow!(
+                "{} is not a directory, or is a symlink, and a connector's config and key stand in a folder only root writes",
+                folder.display()
             ),
+            _ => anyhow::anyhow!("opening {}: {e}", folder.display()),
+        });
+    }
+    // SAFETY: `dir` is a descriptor this call opened.
+    let dir = unsafe { OwnedFd::from_raw_fd(dir) };
+    let name_c = c(name.as_bytes())?;
+    // SAFETY: as above, relative to the folder's descriptor.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name_c.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        let e = std::io::Error::last_os_error();
+        return Err(match e.raw_os_error() {
+            Some(libc::ELOOP) => symlink(path),
             _ => anyhow::anyhow!("opening {}: {e}", path.display()),
-        })?;
-    let meta = file
-        .metadata()
-        .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
-    if !meta.file_type().is_file() {
+        });
+    }
+    // SAFETY: `fd` is a descriptor this call opened.
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let st = fstat(fd).map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
+    if st.st_mode & libc::S_IFMT != libc::S_IFREG {
         anyhow::bail!(
-            "{} is not a regular file, and a config carrying a key is one",
+            "{} is not a regular file, and a connector's config and key are each one",
             path.display()
         );
     }
-    // SAFETY: geteuid takes nothing and cannot fail.
-    let me = unsafe { libc::geteuid() };
-    if meta.uid() != me {
+    if st.st_uid != trust.owner {
         anyhow::bail!(
-            "{} is owned by uid {}, not the invoking uid {me}; a config carrying a key is read only from its owner",
+            "{} is owned by uid {}; a connector's config and key are root's, and this connector only reads them",
             path.display(),
-            meta.uid()
+            st.st_uid
         );
     }
-    let mode = meta.mode() & 0o7777;
-    if mode & !0o600 != 0 {
+    if st.st_gid != trust.group {
         anyhow::bail!(
-            "{} has mode {mode:04o}; a config carrying a key is 0600 or tighter",
+            "{} has group {}, not this connector's group {}; a connector's config and key are read through its own group alone",
+            path.display(),
+            st.st_gid,
+            trust.group
+        );
+    }
+    let mode = st.st_mode & 0o7777;
+    if mode & !0o640 != 0 {
+        anyhow::bail!(
+            "{} has mode {mode:04o}; a connector's config and key are 0640 or tighter, with nothing for others",
             path.display()
+        );
+    }
+    access_list(fd, path, held)?;
+    // The folder's descriptor, opened before the file's, is judged after
+    // it: both are judged before a byte is read, and the file's own
+    // refusal names the file.
+    let st =
+        fstat(dir.as_raw_fd()).map_err(|e| anyhow::anyhow!("reading {}: {e}", folder.display()))?;
+    if st.st_uid != trust.owner
+        || (st.st_gid != trust.group && st.st_gid != 0)
+        || st.st_mode & 0o027 != 0
+    {
+        anyhow::bail!(
+            "{} is writable by group or others, or not root's; a connector's config and key stand in a folder only root writes",
+            folder.display()
         );
     }
     Ok(file)
+}
+
+fn fstat(fd: RawFd) -> std::io::Result<libc::stat> {
+    // SAFETY: an all-zero stat is valid, and fstat fills it.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid descriptor and a stat to fill.
+    if unsafe { libc::fstat(fd, &mut st) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(st)
+}
+
+/// **The file's access list, judged** (the brief of 2026-11-27, child 6):
+/// read by descriptor; none where the file carries none or the filesystem
+/// keeps none; a key refused for any entry beyond its owner, group and
+/// others; a config refused for a named entry, the owning group's entry or
+/// the mask granting write or execute. Any other error reading it refuses
+/// the file: nothing is admitted on a list that was not read.
+fn access_list(fd: RawFd, path: &Path, held: Held) -> anyhow::Result<()> {
+    let mut buf = [0u8; 4 + 8 * 64];
+    // SAFETY: a valid descriptor, a NUL-terminated name and a buffer of
+    // its stated length.
+    let n = unsafe {
+        libc::fgetxattr(
+            fd,
+            ACL_XATTR.as_ptr().cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+        )
+    };
+    if n < 0 {
+        let e = std::io::Error::last_os_error();
+        return match e.raw_os_error() {
+            Some(libc::ENODATA) | Some(libc::ENOTSUP) => Ok(()),
+            _ => Err(anyhow::anyhow!(
+                "reading the access list of {}: {e}; a file whose list was not read is refused",
+                path.display()
+            )),
+        };
+    }
+    let list = &buf[..n as usize];
+    if list.len() < 4
+        || (list.len() - 4) % 8 != 0
+        || u32::from_le_bytes([list[0], list[1], list[2], list[3]]) != ACL_VERSION
+    {
+        anyhow::bail!(
+            "{} carries an access list that does not parse; a file whose list was not read is refused",
+            path.display()
+        );
+    }
+    for entry in list[4..].chunks_exact(8) {
+        let tag = u16::from_le_bytes([entry[0], entry[1]]);
+        let perm = u16::from_le_bytes([entry[2], entry[3]]);
+        match held {
+            Held::Key if matches!(tag, ACL_USER | ACL_GROUP | ACL_MASK) => anyhow::bail!(
+                "{} carries an access-list entry beyond its owner, group and others; a connector's key is read by its own group alone",
+                path.display()
+            ),
+            Held::Config
+                if matches!(tag, ACL_USER | ACL_GROUP | ACL_GROUP_OBJ | ACL_MASK)
+                    && perm & !ACL_READ != 0 =>
+            {
+                anyhow::bail!(
+                    "{} carries an access-list entry that grants more than read; a connector's config is written by root alone",
+                    path.display()
+                )
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Parse a connector's config, **naming only its own members in an error**
@@ -135,6 +346,17 @@ pub fn parse_config<T: serde::de::DeserializeOwned>(
     {
         anyhow::bail!(
             "{}: the config does not parse: the member local_address is not an IP literal",
+            path.display()
+        );
+    }
+    // **A config carrying its key inline is an old one** (the brief of
+    // 2026-11-27, child 6): refused by name, so it never starts keyless.
+    if members.contains(&"key_file")
+        && let Ok(table) = content.parse::<toml::Table>()
+        && table.contains_key("key")
+    {
+        anyhow::bail!(
+            "{}: the config carries its key inline (key); a connector reads its key from key_file, a file of its own",
             path.display()
         );
     }
@@ -230,6 +452,12 @@ pub struct LinkConfig {
     pub plane: Plane,
     pub server_certificate: String,
     pub certificate: String,
+    /// **The connector's key, a file of its own** (the brief of 2026-11-27,
+    /// child 6): absolute, a box fact, read by `load_key` under the key's
+    /// rule once the config has passed.
+    pub key_file: std::path::PathBuf,
+    /// The key's PEM as `load_key` read it; never a config member.
+    #[serde(skip)]
     pub key: String,
     /// **The card's address this connector dials from** (Spec 8): an IP
     /// literal bound, port zero, before the dial, a box fact appended after
@@ -253,6 +481,32 @@ impl std::fmt::Debug for LinkConfig {
 }
 
 impl LinkConfig {
+    /// **Read the key from `key_file` under `trust`**, after the config at
+    /// `config` passed: an absolute path, one PKCS #8 ECDSA P-256 PEM
+    /// block, and the config's certificate over it, checked at every load
+    /// as `adopt`'s `key_mismatch` is.
+    pub fn load_key(&mut self, config: &Path, trust: &Trust) -> anyhow::Result<()> {
+        if !self.key_file.is_absolute() {
+            anyhow::bail!("{}: key_file is not an absolute path", config.display());
+        }
+        let pem = read_trusted(&self.key_file, Held::Key, trust)?;
+        if !crate::link::key_config::one_key(&pem) {
+            anyhow::bail!(
+                "{}: the key is not one PKCS #8 ECDSA P-256 PEM block",
+                self.key_file.display()
+            );
+        }
+        if !crate::link::key_config::over_key(&self.certificate, &pem) {
+            anyhow::bail!(
+                "{}: the certificate is not over the key in {}",
+                config.display(),
+                self.key_file.display()
+            );
+        }
+        self.key = pem;
+        Ok(())
+    }
+
     /// A config minted for the other plane is refused: its credential is
     /// bound to that plane (Spec 8), and the server would refuse its hello.
     pub fn expect_plane(&self, plane: Plane) -> anyhow::Result<()> {
@@ -966,7 +1220,7 @@ pub async fn run<S, F, H, HF>(
     H: FnMut(&LinkConfig) -> HF,
     HF: Future<Output = Result<FromClient, String>>,
 {
-    const REINSTALL: &str = "Re-install this agent's config at the path this connector was started with, from `weaver-web register` or `weaver-web rotate`: it is re-read before each retry at the cap, so no restart is needed";
+    const REINSTALL: &str = "Re-install this agent's config and key at the paths this connector was started with, from `weaver-web register` or `weaver-web rotate`: both are re-read before each retry at the cap, so no restart is needed";
     let mut failures: u32 = 0;
     let mut reload_due = false;
     // **Since when the link has been down, and why** (Spec 2.14): an

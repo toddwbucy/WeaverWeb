@@ -11,7 +11,7 @@
 //! holds for `src/`. The integration tests under `tests/` are crates of
 //! their own and keep `tempfile`'s names.
 
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 /// The age past which the sweep removes a directory of the suite's shape,
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 const STALE: u64 = 6 * 3600;
 
 /// **A test's temporary directory**, `tempfile::tempdir`'s in all but its
-/// name, after the run's one sweep.
+/// name and its mode, 0700, after the run's one sweep.
 pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
     static SWEPT: std::sync::Once = std::sync::Once::new();
     let at = unix_now();
@@ -29,9 +29,15 @@ pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
             eprintln!("swept {} stale test directories: {swept:?}", swept.len());
         }
     });
+    // **0700, whatever the umask**: tempfile makes a directory by the umask
+    // where it is given no mode, and a connector's trust rule refuses a
+    // folder others may enter (the brief of 2026-11-27, child 6), so a key
+    // laid directly under a test's directory reads as one laid in a folder
+    // of root's.
     tempfile::Builder::new()
         .prefix(&named(at))
         .rand_bytes(0)
+        .permissions(std::fs::Permissions::from_mode(0o700))
         .tempdir()
 }
 

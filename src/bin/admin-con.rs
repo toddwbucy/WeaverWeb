@@ -46,14 +46,15 @@ struct Args {
 /// 8.3).
 #[derive(clap::Subcommand)]
 enum Command {
-    /// Create the config holding this connector's new key alone, and print
-    /// its certificate request. No dial.
+    /// Create this connector's key file, its group the named one at mode
+    /// 0640, and print its certificate request. Run as root. No dial.
     Request(RequestArgs),
     /// Dial the console under the pairing protocol, show the code, and
     /// write the console's answer once the operator enters it.
     Pair(PairArgs),
-    /// Complete the config from the pairing's answer, once its certificate
-    /// is over this connector's key and verifies under its authority.
+    /// Write the config from the pairing's answer, once its certificate is
+    /// over the request's key and verifies under its authority, naming the
+    /// key file, which it never opens. Run unprivileged.
     Adopt(AdoptArgs),
     /// The setup connection's asks, under the admin plane's credential.
     #[command(subcommand)]
@@ -65,16 +66,11 @@ async fn main() -> anyhow::Result<ExitCode> {
     let args: Args = parse_args("admin-con", &["request", "pair", "adopt", "setup"]);
     if let Some(command) = args.command {
         let status = match command {
-            Command::Request(a) => {
-                box_commands::request(&mut printer("admin-con request"), Plane::Admin, &a.config)
-            }
+            Command::Request(a) => box_commands::request(&mut printer("admin-con request"), &a),
             Command::Pair(a) => box_commands::pair(&mut printer("admin-con pair"), &a).await,
-            Command::Adopt(a) => box_commands::adopt(
-                &mut printer("admin-con adopt"),
-                Plane::Admin,
-                &a.config,
-                &a.answer,
-            ),
+            Command::Adopt(a) => {
+                box_commands::adopt(&mut printer("admin-con adopt"), Plane::Admin, &a)
+            }
             Command::Setup(SetupCommand::Describe { config }) => {
                 box_commands::setup_describe(&mut printer("admin-con setup describe"), &config)
                     .await

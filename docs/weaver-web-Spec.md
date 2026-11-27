@@ -2631,17 +2631,23 @@ it decides are stated here and in section 2.8, and the reasons are there.
   row there under the row's lock and refuses one retired since step three
   read it, rather than making it live again, and the credentials are minted
   only once both re-checks pass. **The store keeps
-  fingerprints only, and the two client configs are handed over and kept
-  nowhere**: held in the server's memory alone, each under a 32-byte handle
+  fingerprints only, and the two client configs and the two connectors' key
+  files are handed over and kept nowhere**: held in the server's memory alone, each under a 32-byte handle
   from the operating system's random source, taken once, within five
   minutes, by the session that minted them, under `Cache-Control:
   no-store`, never in the store, a file, a log line or an audit record;
-  at most 64 wait or are reserved, a write reserving room for its two at
+  at most 64 wait or are reserved, a write reserving room for its four at
   step three atomically and releasing what it does not hold on every path,
   so the bound counts the writes in flight; and a restart drops any not
   taken, after which the admin rotates. The
-  page says each holds its connector's private key and goes to the box with
-  the install script, readable only by the connector's own user at 0600.
+  page says each key file holds its connector's private key, in a file of
+  its own (section 8), and that the four go to the box with the install,
+  each key root's and read through its connector's own group alone at 0640,
+  and that the install adds `key_file` to each config. `register` and
+  `rotate` from the host write the same four files, `gate-con.toml`,
+  `gate-con.key`, `admin-con.toml` and `admin-con.key`, staged and renamed
+  into place one by one, a failure naming what stands published and what
+  stands staged.
   **The way forward**, as built on 2026-11-13: the hand-over page's last
   line is the next step.
   - Where the admin holds a live grant on the agent, it is a link to the
@@ -4885,8 +4891,8 @@ script lays the agent's folder of per-agent files**, laid once the name is known
 the operator's words of the same day. It holds the loop's directory and gate-con's list
 of allowed destinations; root owns both, and the agent's group reads them. That list is
 the Planner's reading of the operator's words "gatecon's config" (2026-11-26), put to
-the operator and his to change. gate-con's credential config, which carries its key,
-is not in that folder's sentence: it stays gate-con's own, as section 8 states. The
+the operator and his to change. gate-con's config and its key file are not in that
+folder's sentence: they are laid by section 8's trust rule, root's and gate-con's group's. The
 folder's location is the appliance's, and no document here names it. What the box lays from the tuple once
 Confirm stands is the rest of the agent (below). On the state drive each agent has a directory of its own under the state mount,
 named for it, which holds the agent's folder and its home side by side.
@@ -6262,9 +6268,52 @@ entry in the declaration's allow list alone does not reach the gate's
 socket. This document names no group, socket path, mode or uid for either.
 **One privileged invocation stands in this crate, admin-con's sudo
 invoker**, per section 7.2; no other sudo, no root wrapper and no setuid
-binary stands anywhere in it, per section 9's row. Placing each connector's
-config at 0600 under its own user is the install's, and carries no box path
-into the repository.
+binary stands anywhere in it, per section 9's row.
+
+**Each connector reads its config and its key from two files, under one
+trust rule** (child 6 of `act/the-connectors-side-of-the-socket`, the brief
+of 2026-11-27): the config names `key_file`, an absolute path, a box fact
+the install writes, and the key file holds the key's PKCS #8 PEM alone, one
+ECDSA P-256 block. The connector opens the key only once the config has
+passed, and checks the config's certificate over the key at every load, as
+`adopt`'s `key_mismatch` does. Each file is opened by descriptor under its
+folder's descriptor, without following a symbolic link and without blocking,
+and both descriptors are judged, the file's first, before a byte is read:
+
+| | Config | Key file | The folder holding each |
+| --- | --- | --- | --- |
+| Owner | root | root | root |
+| Group | the connector's own effective group | the same | the connector's own group, or root's |
+| Mode | no bit outside 0640 | no bit outside 0640 | no write for group or others, nothing for others |
+| Access list | named entries grant read alone | none beyond the three base entries | not read |
+| Kind | a regular file | a regular file | a directory |
+| Bound | 1 MiB | 64 KiB | none |
+
+**The access list is read as well as the mode**, from the file's descriptor,
+since on a file that carries one the mode's group bits show the mask and not
+the owning group's rights. A key carrying any entry beyond its owner, owning
+group and others is refused, since an entry is exactly how the service's
+account would read it; a config is refused where a named entry, the owning
+group's entry or the mask grants write or execute, the service's account
+reading it through an entry of its own where the agent's folder of settings
+lays one. A filesystem that keeps no access lists has none to carry; any
+other failure to read the list refuses the file. A config carrying its key
+inline, `key`, is an old one and refused with one sentence naming the member,
+so a connector never starts keyless. The test build takes its own uid as the
+owner, since a test makes no file of root's, and a test of root's rule names
+owner 0 itself. Laying the files is the install's, and carries no box path
+into the repository; the shape of each is the brief's list for the other
+repository.
+
+```graph
+node: web-a-connectors-key-is-a-file-of-its-own
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-a-connectors-key-is-a-file-of-its-own
+```
 
 **Nothing in the read or write path is box-bound to the agents.** The reader
 is a store client, the runner is a queue consumer, and the front end with
@@ -6594,9 +6643,9 @@ every connection at admission is backed off. **`not_live` and
 certificate the pinned authority did not sign means the server's authority
 was rotated; all three are retried only at the cap and never faster**, each
 logged with what the operator must do, which is to re-install the agent's
-config from a registration or a rotation. **The connector re-reads its
-config before each retry at the cap**, under the same trust rule as at
-start, so a config re-installed at its path is dialed with at the next
+config and key from a registration or a rotation. **The connector re-reads its
+config and its key file before each retry at the cap**, under the same trust rule as at
+start, so a config and key re-installed at their paths are dialed with at the next
 attempt and no restart is needed; without the re-read the guidance could
 never take effect. **Only the link's members change at a re-install**: a
 re-read config naming another agent or plane than the one the connector
@@ -6909,9 +6958,12 @@ half-rendered.
   the operator's rulings of 2026-10-02 and 2026-10-03 for the connectors;
   the server takes the same rule as a system unit under its own account
   (this document's election of 2026-11-11), so the console survives a restart
-  of the machine with nobody signed in. No `Group=` is set: each runs with
-  its account's own groups, which the box gives it, and section 8's service
-  users hold exactly what their planes need through them.
+  of the machine with nobody signed in. **A connector's unit sets `Group=`,
+  its plane's group parameter**, the group its config and key file are read
+  through under section 8's trust rule, which checks the file's group
+  against the connector's own effective group (the brief of 2026-11-27,
+  child 6); its account's other groups stay its own, which the box gives
+  it. The server's unit sets no `Group=`.
 - **`UMask=0077`**: every file a program creates is its own alone, the
   server's authority and operations log among them.
 - **`Wants=` and `After=network-online.target`**: the server listens on
@@ -6927,8 +6979,10 @@ half-rendered.
   the brief measured.
 - **`ExecStart=`** the program under the binaries location with `--config`
   naming its config: the server's at `<config root>/config.toml` with
-  `serve`, a connector's at `<config root>/connectors/<agent>/gate-con.toml`
-  or `admin-con.toml`.
+  `serve`, a connector's at `<config root>/connectors/<agent>/gate/gate-con.toml`
+  or `<config root>/connectors/<agent>/admin/admin-con.toml`, each plane in a
+  folder of its own, since the trust rule's folder is of the connector's
+  group and one folder carries one group.
 
 **What admin-con's unit adds, and why:**
 
@@ -7001,11 +7055,13 @@ repository, read by the staging tool alone:
 - **`[locations]`, always required**: `binaries`, the directory the
   programs are placed in; `units`, the directory the unit files and their
   drop-ins are placed in; `config_root`, the directory holding the server's
-  `config.toml` and `connectors/<agent>/` beneath it.
+  `config.toml` and `connectors/<agent>/<plane>/` beneath it.
 - **`[server]`, where the server's unit is staged**: `account`, and
   `binary`, the built `weaver-web` to place.
 - **`[connectors]`, where the connectors are staged**: `gate_account`,
-  `admin_account`, `admin_path` (admin-con's `PATH`), `gate_con_binary`,
+  `admin_account`, `gate_group` and `admin_group` (each connector's unit's
+  `Group=`, and the group of its folder, config and key file),
+  `admin_path` (admin-con's `PATH`), `gate_con_binary`,
   `admin_con_binary`, and `handover`, the directory `register` wrote into
   (its `--out`), given with an agent and only then.
 - **`[[agent]]`, one per agent on the box**: `box` and `name` as registered,
@@ -7026,7 +7082,7 @@ appliance is a locked-down image and nothing of an agent rides it, and
 their word of the same day that the image's binaries are compiled inside
 it from a named commit. `[connectors]` with no `handover` and no
 `[[agent]]` stages the two programs, the two templates rendered with the
-image's accounts, `binaries`, `config_root` and `admin_path`, and the
+image's accounts and groups, `binaries`, `config_root` and `admin_path`, and the
 directories `binaries`, `units`, `config_root` and
 `<config root>/connectors`. It stages no handover, connector config or
 drop-in, and enables no instance, since an instance is an agent's name. A
@@ -7074,21 +7130,26 @@ nothing of the first's. It writes, under `<out>`:
 
 - **`files/`**, a tree mirroring each destination: the three units, each
   admin-con instance's stop-timeout drop-in, and each agent's two
-  connector configs. **A connector config is its handover file, unchanged,
-  then the box facts from the parameter file**, and the tool loads the
-  staged file through that connector's own config loader (`client::read_private`'s
-  trust rule on the staged copy, the plane, the members, the bounds and the
-  absolute paths), refusing where
-  it does not load, where its `agent` is not the parameter's `name`, or
-  where the handover file is missing or is not a regular file. A refusal
-  names the member, never the file's text, which carries a key. Each
-  handover file and each program is opened without following a symlink and
-  judged and read through the descriptor that open gave, as the
-  connectors' trust rule reads a config, so the check and the read are one
-  look at the name. **A handover file is held to that trust rule whole**:
-  the invoking user's, at `0600` or tighter, since it names the server the
-  connector will trust and carries its key, and the staged copy's `0600`
-  must not stand for a source anyone else could have written or read. The
+  connector configs, each beside its key file in its plane's folder. **A
+  connector config is its handover file, unchanged, then the box facts from
+  the parameter file and `key_file`, the destination of its key**; the key
+  file is the handover's key, unchanged, refused before anything is written
+  where it is not one PKCS #8 ECDSA P-256 block or the config's certificate
+  is not over it. The tool loads the staged config through that connector's
+  own loader of the config alone (`load_unkeyed`: section 8's trust rule
+  with the invoking user's uid and group, the staged copy being the
+  operator's, then the plane, the members, the bounds and the absolute
+  paths), since the key stands at `key_file` only once the manifest is
+  applied, refusing where it does not load, where its `agent` is not the
+  parameter's `name`, or where a handover file is missing or is not a
+  regular file. A refusal names the member, never the file's text, nor a
+  key. Each handover file and each program is opened without following a
+  symlink and judged and read through the descriptor that open gave, so the
+  check and the read are one look at the name. **A handover file is held to
+  a rule of its own**: the invoking user's, at `0600` or tighter, since a
+  config names the server the connector will trust and a key file is the
+  connector's key, and the staged copy must not stand for a source anyone
+  else could have written or read. The
   cost is the operator's: a handover downloaded through a browser from the
   admin's agents page arrives under the browser's umask, often `0644`, so
   the operator tightens it (`chmod 600`) before staging, and the refusal
@@ -7098,15 +7159,16 @@ nothing of the first's. It writes, under `<out>`:
   file, or for a program the built binary the parameter names), the
   destination, the owner, the group, the mode, and the SHA-256 of the source
   (`-` for a directory). The binaries, units and directories are `root`'s,
-  the directories and binaries at `0755` and the units at `0644`; each
-  connector config is its plane's account's at `0600`, as the connector's
-  trust rule requires, under an agent directory of `root`'s at `0755`. A
-  group of `-` is the owner's primary group.
+  the directories and binaries at `0755` and the units at `0644`; **each
+  connector's config and key file are `root`'s, of its plane's group, at
+  `0640`, in a folder of `root`'s, of that group, at `0750`**, as section
+  8's trust rule requires, under an agent directory of `root`'s at `0755`.
+  A group of `-` is the owner's primary group.
 - **Its answer**, one JSON object on stdout with the exit status agreeing,
   the register verbs' shape (section 8): `verb` `stage`, `ok`, and on
   success the manifest's path and its line count, or on refusal the reason.
 
-**`<out>` holds keys**, the connectors' configs, so it must not exist or be
+**`<out>` holds keys**, the connectors' key files, so it must not exist or be
 an empty directory of the operator's own at `0700` or tighter, and the tool
 makes it `0700` (a relative `<out>` is taken against the working
 directory, and its `.` components and repeated or trailing separators are
@@ -7551,14 +7613,17 @@ with no escape sequence in it. **One set of exit statuses serves every command:*
 | 5 | `expired` | the pairing alone: no code entered within the window |
 | 6 | `unknown` | the connection ended after the console may have acted, and the Pair page says which |
 
-The pairing takes three steps on the box, so that admin-con makes its own key under its
-own account and no command of this repository runs as root to parse what the network
-sent. `gate-con request` and `gate-con adopt` stand as built for the loop's install,
-which enrolls gate-con, and the pairing runs neither:
-1. **`admin-con request`**, under admin-con's account. In: the path of the connector's
-   config, which must not exist. Out: that file
-   created holding the connector's new key alone, under the trust rule a connector's
-   config already takes, and a `request` line carrying the certificate request. No dial.
+The pairing takes three steps on the box, so that no command of this repository runs as
+root on what the network sent: `request` runs as root and reads nothing, and `adopt`,
+which reads the answer, runs unprivileged and never opens the key (the brief of
+2026-11-27, child 6). `gate-con request` and `gate-con adopt` stand as built for the
+loop's install, which enrolls gate-con, and the pairing runs neither:
+1. **`admin-con request`**, as root. In: `--key-file`, the path of the connector's key
+   file, which must not exist, and `--group`, the connector's group by name. Out: that
+   file created new, never through a link, its group and mode 0640 set by descriptor
+   before the first key byte is written, holding the new key's PKCS #8 PEM alone, under
+   section 8's trust rule; and a `request` line carrying the certificate request. A
+   failure after the create removes the file. No dial.
 2. **`admin-con pair`**, under an unprivileged account the image names. In: the
    console's address and port, admin-con's request, the survey's report (`--report`,
    required, sent at the stage `pairing`), a file read before any dial and refused as
@@ -7580,44 +7645,31 @@ which enrolls gate-con, and the pairing runs neither:
    - `unknown` (6), the connection ended after the answer was written and before the
      console's last word, with `admin`, the fingerprint of the answer's certificate,
      which the setup script shows beside the Pair page's (above)
-3. **`admin-con adopt`**, under admin-con's account. In: its config from step 1 and the
-   answer. It checks that the answer's certificate for its plane carries its own key's
-   public half and verifies under the authority the
-   answer carries, whose fingerprint is the one `pair` printed, and then writes the
-   complete config in place, the members `register` writes, so the connector's unit
-   reads it unchanged (section 8.1). Out: `adopted` (0), or `refused` (4) with its
-   reason, `key_mismatch` or `not_signed`, and nothing written. An answer carries no
-   `gate` member, and `gate-con adopt` given one refuses it as `usage`, since its plane
-   is not in it. **`adopt` appends and
-   never rewrites the key**: it finds the key's prefix by parsing the exact bytes
-   `request` wrote, never a stored length, refuses as `usage` a file whose prefix is not
-   a well-formed key-only config for its plane, and replaces only what follows the
-   prefix. A crash at any write leaves the key byte for byte and a re-run completes the
-   file, and a config left with no certificate is refused by the service at its start,
-   its `certificate` member missing.
+3. **`admin-con adopt`**, under an unprivileged account that reads no key file. In:
+   `--request`, the file holding step 1's `request` line, `--answer`, `--key-file`, the
+   path the config names, which `adopt` never opens and which need not exist where it
+   runs, and `--out`, the config to write, which must not exist. It checks that the
+   answer's certificate for its plane carries the request's public half and verifies
+   under the authority the answer carries, whose fingerprint is the one `pair` printed,
+   and then writes `--out` new, never through a link, at 0644, holding certificates and
+   paths alone: the members `register` writes and `key_file`, so the connector's unit
+   reads it unchanged once installed (section 8.1). Out: `adopted` (0), or `refused` (4)
+   with its reason, `key_mismatch` or `not_signed`, and nothing written; a relative
+   `--key-file`, a request line that is not one, an `--out` that stands, and an answer
+   carrying no certificate for the plane are `usage`, and nothing is written. An answer
+   carries no `gate` member, so `gate-con adopt` given one refuses it as `usage`.
 
-**The config reaches the agent's directory by a rename**, since a unit reads its config
-under the agent's name and the name arrives only with `paired`. `request` writes the
-config into the setup script's directory for the run, and after `paired` and before
-`adopt` the script moves admin-con's config into the agent's directory. Four conditions
-bind the move:
-- **A rename, never a copy.** The two directories are on one filesystem and the move is
-  `rename(2)`, which keeps the file's inode, owner and mode. A move that would cross
-  filesystems is refused and never done by copying, since a copy made by root is root's
-  file.
-- **Every command names its config.** `request`, `adopt` and the running service each
-  take `--config` with no default, as the connectors do as built.
-- **The key never leaves its config.** `request` writes the key once, into the config it
-  creates, under the connector's own account, and `adopt` adds the certificate and the
-  server's facts to that same file in place.
-- **`adopt` refuses a config whose owner or mode is wrong**, by the rule the connectors
-  apply at their start: a regular file of the connector's own uid, owner-only, opened
-  without following a symbolic link. A config the move left in any other state is
-  refused before `adopt` writes a byte, and the service refuses it again at its start.
+**A fixed root program of the appliance installs `adopt`'s output as the connector's
+config**, root's, of the connector's group, at 0640, in the connector's part of the
+agent's folder of settings, with the service's access-list entry granting read where the
+layout lays one (the brief of 2026-11-27's list for the other repository). Its name, its
+arguments and where each file stands are the appliance's; this repository's part is
+section 8's trust rule, which refuses any other shape at the connector's start, and the
+key file's path, which `request` was given and `adopt` names.
 
 **The steps after `paired` are the appliance's setup script's**, on the operator's ruling
-of 2026-11-23 that one interactive script finishes setup and ends in pairing: it moves
-admin-con's config and runs its `adopt`. The report has crossed with the pairing
+of 2026-11-23 that one interactive script finishes setup and ends in pairing: it runs
+`adopt` and the install of its output. The report has crossed with the pairing
 itself, and `setup report` (section 8.3) sends a report run again, which replaces the
 row (section 6.2). Weaver Web's pages wait on none of these
 steps, and the box commands keep their arguments and printed lines (the Planner's ruling
@@ -8027,7 +8079,8 @@ two connectors report.
 | an agent is present only when both planes connect from one row | perturbation: mark present on either plane alone, an agent whose admin-con is down reads present with a tuple and a load state nobody has confirmed |
 | the server's authority is loaded before the listener starts and never minted at start | perturbation: mint the authority at start instead of loading it, restart the server, and every connector's hello is refused against a certificate it does not pin |
 | the client credential is stored as a fingerprint and never the key | perturbation, at the schema: store the key, a read of the register is a set of credentials anyone can present |
-| a register verb through the server is an admin's under the exclusion, a retired row is never live again, and its client configs are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the reservation, and a registration with no room for its configs is recorded and written; count the configs held and not those reserved, and five concurrent registers against room for four all land, past the bound; drop a rotation's re-check of its row inside the transaction, and a row the host retired after step three is live again; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line; drop the retired check from the host's rotation, and a row retired through the web is made live again by the host's `rotate` of its identity; drop the re-read of a revocation's row, and a revocation the host's overtook after step three answers and is audited as landed, though it revoked nothing; drop a revocation's notification, and the revoked plane's live connection stays open; revoke each plane by its own statement, and a retirement advances its row's version twice for one authored edit; drop the shared identity exclusion from a revocation, and a grant removal commits beneath a revocation held after its re-check; drop the grants page's mark, and a grant on a retired agent reads as any other |
+| a connector reads its config and its key file under section 8's trust rule, each by descriptor, the key opened only once the config has passed and the certificate checked over it at every load | perturbation in `src/link/trust_tests.rs`, files in a temporary folder of the test's own uid and access lists written by `fsetxattr`: admit a group-writable key, and a key at 0660 is read; drop the file's owner check, and a config of the connector's own uid is read under root's rule, or refused for its folder, whose sentence the test does not take; drop the key's access-list check, and a key a named party reads is read; drop the config's, and a config a named entry grants write is read. A folder others may write or enter, a symlink, a FIFO and each bound are refused in the same module, and in `src/link/client_tests.rs` a config carrying its key inline, a relative `key_file`, a key that is not one block and a key the certificate is not over are each refused at start, the inline key's value never printed |
+| a register verb through the server is an admin's under the exclusion, a retired row is never live again, and its client configs and key files are handed over once and kept nowhere | perturbation in `src/agents_tests.rs`, against a real listener and an authority minted at test time: drop the admin's re-check from the register's transaction, revoke the grant between the surface's read and the write, and the agent is registered; drop the shared identity exclusion from it, and a revocation commits beneath a register held after its re-check; drop the take's session check, and another session of the same admin takes a config; drop the take's removal, and a config is taken twice; drop the lifetime, and a config past five minutes is taken; drop the reservation, and a registration with no room for its configs is recorded and written; count the configs held and not those reserved, and five concurrent registers against room for eight files, two registers' worth, all land, past the bound; drop a rotation's re-check of its row inside the transaction, and a row the host retired after step three is live again; drop the check of the authority on disk, and a register mints under an authority rotated since the server loaded it; drop a rotation's notification, and the old credential's live connection stays open; drop a rotation's resolution of its agent, and an admin's unknown agent leaves a begun and failed pair; log a config at its take, and a private key is in a log line; drop the retired check from the host's rotation, and a row retired through the web is made live again by the host's `rotate` of its identity; drop the re-read of a revocation's row, and a revocation the host's overtook after step three answers and is audited as landed, though it revoked nothing; drop a revocation's notification, and the revoked plane's live connection stays open; revoke each plane by its own statement, and a retirement advances its row's version twice for one authored edit; drop the shared identity exclusion from a revocation, and a grant removal commits beneath a revocation held after its re-check; drop the grants page's mark, and a grant on a retired agent reads as any other |
 | an act's `ok` outcome commits with it, and a lost commit answer is classified by that record | perturbation in `src/admin_tests.rs`, `src/grants_tests.rs`, `src/agents_tests.rs`, `src/keys_tests.rs` and `src/host_tests.rs`, the commit's answer lost by a test fault after PostgreSQL applied it: write the `ok` outcome after the commit's answer instead of in the transaction, and each of the five person writes, the three grant and role writes, a revocation and a retirement, a registration and a rotation through the server, a token's redemption, a session's opening, a passkey's addition and removal (`src/keys_tests.rs`), and the host's bootstrap and token answers as failed (the web's writes with the server's failure, the host's commands with a refusal), its outcome `failed`, for an act that landed; and where a later act commits between the lost answer and the read-back, a rotation over a revocation or another admin's enable over a disable, the act is still classified as landed, which a read-back of its effect would not do; drop the read-back's wait on the act's own lock, give up on a disable's answer while its COMMIT is still completing, and the read-back finds no outcome and answers failed for an act that then lands |
 | the tuple and the load state come by admin-con and never by gate-con | perturbation: let the data plane fill the tuple, the row carries a declared tuple from a party the gate's contract forbids to know it and nothing says which party wrote it; let a replayed load event write the tuple, restart the server after an unload, backfill, and the row reads loaded; ask `show` before fixing the replay boundary, unload between the two, and the row reads loaded until the next `show`. **Four clauses are admin-con's ordering**, against the real listener with a fake invoker in `src/link/admin_con_tests.rs`: let a `show` answer cross the link out of order with the file events around it, unload during the `show`, and the row reads loaded until the next `show`; place the answer in the stream at receipt and unload between the snapshot and the receipt, and the row reads loaded; skip the drain, leave an unread load event behind the tail, invoke `show` after an unload, and the row reads loaded; run two verbs at once on one connection, and an older answer lands after a newer one. **The slot's clause**, against the real listener with the service's invoker over the fake service in `src/link/service_invoker_tests.rs`, `the_slot_is_held_across_a_reconnection`: free the slot as the invocation's task begins rather than at its end, and the new connection's admission `show` runs beside a verb past its bound (measured 2026-11-27). **A turn's start and close refresh the load state**, against the real listener in `src/link/tests.rs`: drop the `turn.started` mapping, and the row never reads `active` between a turn's start and close; let a replayed `turn.started` land, and the row reads `active` from history; let a turn's event write the tuple, and the row loses the tuple it held; let a turn's event write the tuple's source, and a `show`-shaped tuple reads as an event's |
 | nothing crosses the link in the clear | perturbation: offer a plaintext hello to the listener, it is refused below any roster; and review, over the listener, that no plaintext accept path exists |
@@ -8055,7 +8108,7 @@ two connectors report.
 | the setup keeps one report, verbatim, a second run's replacing the row | perturbation in `src/enrollment_tests.rs`, `the_setup_keeps_its_one_report_verbatim_a_second_run_replacing_it`: a report and a second run's leave the second alone, byte for byte; one past the bound is refused on the box and at the listener, the kept report unchanged. Insert a row per report, and the first stands beside the second |
 | `admin-con setup report --stage drives` and `admin-con pair --drives-report`, version 1's two forms, each answer `usage` (2) as the arguments are read, before any config is read or any dial | perturbation in `tests/box_commands_usage.rs`, `setup_report_at_the_stage_drives_is_usage` and `pair_with_a_drives_report_is_usage`, which run the built admin-con: take `drives` as a stage again, or take `--drives-report` again, and each test fails (measured 2026-11-25) |
 | a `setup` frame whose report names version 1's stage `drives` does not parse at the listener and is refused `malformed`, and the same frame naming `pairing` is answered for what it is | perturbation in `src/link/tests.rs`, `a_setup_report_naming_the_stage_drives_is_refused_malformed`: take `drives` as another name of `pairing`, and the frame is answered `no_setup` (measured 2026-11-26) |
-| an adopted admin-con connects, and its row reads admin alone | end to end in `src/enrollment_tests.rs`: `admin-con request`, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `admin-con adopt`, and admin-con is admitted on the row, which reads admin alone and never present. `adopt`'s append is shown in `src/link/key_config_tests.rs`: a crash after the open, mid-certificate and before the sync leaves the key byte for byte, the service refuses the config each leaves, and a re-run completes it. Truncate one byte into the key's prefix, and the key's bytes move; accept another plane's header, and the gate's `adopt` takes the admin config |
+| an adopted admin-con connects, and its row reads admin alone | end to end in `src/enrollment_tests.rs`: `admin-con request`, then `pair` against the real listener with the code its `waiting` line shows entered through the page, then `admin-con adopt`, and admin-con is admitted on the row, which reads admin alone and never present. `request` and `adopt` are shown in `src/link/key_config_tests.rs`: the key laid new in its group at 0640 and read by the key's trust rule, a path that stands or a link refused, and a group the account may not set leaving no file; `adopt` writing the members and `key_file` new at `--out` at 0644, the key file named never opened, the config then laid at 0640 loading through its connector with its key; and a crossed key, another authority, a relative `--key-file`, a request line that is not one, an answer with no certificate for the plane and an `--out` that stands each refused, nothing written |
 | the connectors' build holds no `x509-parser` | measurement in `tests/connectors_link.rs`: the package's normal graph without the default features holds no `x509-parser`, and the default graph holds it, which the `enrollment` feature brings in. Make the parser a dependency the default features do not gate, and the graph holds it |
 | at the pairing the box takes the console's chain only where the server's certificate chains to the authority presented with it, and the pairing is TLS 1.3 alone | perturbation in `src/link/pairing_tests.rs`: a console that presents its certificate with another authority's completes no handshake with the box, and a client offering the pairing protocol under TLS 1.2 alone completes none with the listener. Let the box's check pass any chain, or build the pairing's configuration on the default versions, and each completes |
 | a first frame without a `pairing` stage report is refused `no_report`, and one whose report is not one JSON object within 64 KiB is refused `report_refused`, each before the box is listed; a frame carrying a report at version 1's stage `drives`, alone or beside a `pairing` report, is refused `frame_refused` | perturbation in `src/link/pairing_tests.rs`, `a_first_frame_without_a_report_is_refused_no_report` and `a_report_that_is_not_one_object_within_64_kib_is_refused`: a hello with no report, one whose report is an array, one past 64 KiB and one naming `pairing` twice each hear their refusal and none is listed. Drop the checks at the first frame, and the box is listed. Read `drives` as `pairing` (a serde alias), and the two frames naming `drives` are not refused `frame_refused` (measured 2026-11-25) |
@@ -8151,7 +8204,7 @@ two connectors report.
 | the prompt's `unload` follows only a hash-confirmed save point | perturbation in `src/alerts_tests.rs`: ask `unload` on any `save-point` answer, and a `save_point_not_taken`, or a `save_point_taken` with no report, is followed by an unload |
 | no privileged invocation exists in the repository (section 7.2) | perturbation, `tests/no_privilege.rs`: it reads every tracked file outside `docs/`, never following a symlink, comment lines aside by each file's syntax and Markdown read in its fences only, for a privilege-escalating program named as a word, a setuid family call, a child's user or group set on a command, and a setuid or setgid mode bit, with no file excepted; shown to fail when one of each family is planted, in Rust and in a README fence, and in the two files that once held admin-con's sudo invoker. Restore that invoker's file, tracked, and the test is red (measured 2026-11-27). No test reaches a privileged program: admin-con's verbs reach the fake service of `src/link/fake_service.rs`, which runs no program |
 | the staged units carry section 8.1's properties, and admin-con's sets nothing the contract forbids | perturbation in `src/stage_tests.rs`, rendering with invented parameters into a temporary directory: drop `UMask`, `KillMode=mixed`, the stop timeout or `PATH` from a template, and the read of the rendered unit fails; plant one directive of each of section 8.1's five forbidden groups in admin-con's template, and the read fails; drop the renderer's refusal of a placeholder it does not fill, and its test renders such a template instead of refusing it. And the service manager's own verifier: each rendered unit, instanced, passes `systemd-analyze verify` with nothing on its error stream, since the verifier warns and still exits 0 on an unknown key or a value it cannot parse (measured 2026-11-11, systemd 262); the test prints a `skipped:` line where the verifier is absent |
-| a staged connector config is its handover file and the box facts, and loads under the connector's own rule | perturbation in `src/stage_tests.rs`: drop a box fact from the composition, and the connector's loader refuses the staged file; stage an admin plane's handover file as gate-con's, or one naming another agent, and the tool refuses at the staged file's load and leaves `<out>` as it found it; drop that load, or the agent's check, or the removal after a refusal, and the case stages or leaves `<out>` behind |
+| a staged connector config is its handover file, the box facts and `key_file`, beside its handover key, and loads under the connector's own loader of the config alone | perturbation in `src/stage_tests.rs`: drop a box fact from the composition, and the connector's loader refuses the staged file; drop the key's check against its config's certificate, and another credential's key stages beside it; stage an admin plane's handover file as gate-con's, or one naming another agent, and the tool refuses at the staged file's load and leaves `<out>` as it found it; drop that load, or the agent's check, or the removal after a refusal, and the case stages or leaves `<out>` behind |
 | the staging tool refuses every parameter out of shape, and a refusal writes nothing | perturbation in `src/stage_tests.rs`, one case per refusal: a missing member, an unknown member, a relative path, a `..` component, a trailing separator, a character a unit would read, a relative element of admin-con's `PATH`, an account or a name out of its grammar, a name twice, an agent without `[connectors]`, a handover with no agent, an agent with no handover, a file that stages nothing, a program that is a directory or a symlink, a handover file that is missing, a symlink, a directory, open to others or not the operator's own, a location that is a program's destination or lies under one, an `<out>` that is not empty, open to others or not the operator's own; drop each check and its case stages instead, or is refused for another reason, which the case's expected reason catches; after every refusal `<out>` is absent, or as it stood, and a refusal after the writes began empties an `<out>` that stood empty. And a second run on the same `<out>`, its check passed before the first wrote, with `<out>` absent and with it standing empty: refused, the first run's files and manifest unchanged; make `files/` without exclusion, or let a run that made nothing remove `<out>`, and the test fails. And a relative `<out>` with a `.` component and repeated and trailing separators is taken against the working directory and stages, a `..` kept and refused: drop the normalization, and the case is refused for its `.` |
 | an appliance image stages the connectors' half and nothing of an agent | perturbation in `src/stage_tests.rs`, `an_image_stages_the_connectors_programs_and_templates_and_nothing_of_an_agent`, the manifest compared whole with the rendered units' lines and every file written: refuse `[connectors]` with no agent as before, and the image is refused; admit a handover with no agent, or an agent with no handover, and `every_parameter_out_of_shape_is_refused_and_writes_nothing` stages the case or refuses it for another reason (3 cases, each caught) |
 | the manifest names every directory and file with its owner, group, mode and sum, parents first | perturbation in `src/stage_tests.rs`, the manifest read line by line against the parameters: give a connector config another mode or owner, list a file before its directory, or leave a binary's sum out, and the read fails |
@@ -8689,9 +8742,10 @@ a `web-` assertion beside `weaver-admin`'s.
   exchange.
 - **The connectors' pairing and their accounts, closed on this repository's side
   2026-11-17 by section 8.2**, opened 2026-11-15 (sections 8.1 and 8.2). Each
-  connector's `request` and `adopt` run under its own account and `pair` under an
-  unprivileged one, and each config reaches the agent's directory by a rename, so no
-  command of this repository runs as root and the one privileged invocation stays
+  connector's `request` runs as root and reads nothing the network sent, `adopt` and
+  `pair` run under unprivileged accounts, and a fixed root program of the appliance
+  installs `adopt`'s output (the brief of 2026-11-27, child 6), so no command of this
+  repository runs as root on what the network sent and the one privileged invocation stays
   admin-con's sudo invoker (section 7.2). The accounts' names and the services' enabling
   are the image's, with WeaverAgent's documents naming the accounts, an ask upstream
   (`weaver-web-PRD` section 8).

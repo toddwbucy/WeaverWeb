@@ -3194,12 +3194,19 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
         refused.contains("not the file this run staged"),
         "{refused}"
     );
-    assert!(refused.contains("admin config stands staged"), "{refused}");
-    assert!(!agent_dir.join("gate-con.toml").exists());
-    assert!(!agent_dir.join("admin-con.toml").exists());
+    assert!(refused.contains("published: []"), "{refused}");
+    assert!(refused.contains("admin-con.key.staging]"), "{refused}");
+    for entry in [
+        "gate-con.toml",
+        "gate-con.key",
+        "admin-con.toml",
+        "admin-con.key",
+    ] {
+        assert!(!agent_dir.join(entry).exists(), "{entry}");
+    }
 
-    // The admin staging entry swapped: the gate config stands, the admin's
-    // is refused.
+    // The admin config's staging entry swapped: the gate's config and key
+    // stand, the admin's are refused.
     let dir = super::verbs::ConfigDir::open(&out, "box", "swap2").unwrap();
     let staged = super::verbs::stage_pair(
         &cfg,
@@ -3215,13 +3222,22 @@ fn a_staging_entry_swapped_before_the_publish_is_refused() {
     std::fs::remove_file(agent_dir.join("admin-con.toml.staging")).unwrap();
     std::fs::write(agent_dir.join("admin-con.toml.staging"), "swapped in").unwrap();
     let refused = staged.publish(false).unwrap_err().to_string();
-    assert!(refused.contains("the gate config stands at"), "{refused}");
+    assert!(
+        refused.contains(&format!(
+            "published: [{}, {}]",
+            agent_dir.join("gate-con.toml").display(),
+            agent_dir.join("gate-con.key").display()
+        )),
+        "{refused}"
+    );
     assert!(
         refused.contains("not the file this run staged"),
         "{refused}"
     );
     assert!(agent_dir.join("gate-con.toml").exists());
+    assert!(agent_dir.join("gate-con.key").exists());
     assert!(!agent_dir.join("admin-con.toml").exists());
+    assert!(!agent_dir.join("admin-con.key").exists());
     assert_eq!(
         std::fs::read_to_string(agent_dir.join("admin-con.toml.staging")).unwrap(),
         "swapped in",

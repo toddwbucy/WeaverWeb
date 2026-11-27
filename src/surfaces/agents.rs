@@ -17,7 +17,7 @@
 //! commit (`Store::register_agent_by_admin_on`). **The store keeps
 //! fingerprints only.**
 //!
-//! **The hand-over**: the two client configs a write mints are held in this
+//! **The hand-over**: the two client configs and two keys a write mints are held in this
 //! process's memory alone, each under a 32-byte handle from the operating
 //! system's random source, taken once, within five minutes, by the session
 //! that minted them, under `Cache-Control: no-store`, and dropped. They are
@@ -59,7 +59,7 @@ use crate::surfaces::gate::{Policy, Session};
 pub const HANDOVER_LIFETIME: Duration = Duration::from_secs(5 * 60);
 
 /// **How many client configs may wait at once**, held or reserved: a
-/// write reserves room for its two at step three, under the hand-over's
+/// write reserves room for its four (two configs, two keys) at step three, under the hand-over's
 /// lock, so the bound counts the writes in flight too and is exact.
 pub const HANDOVERS_HELD: usize = 64;
 
@@ -366,9 +366,11 @@ struct Minted {
     admin: ClientCredential,
 }
 
-/// One config waiting, as the hand-over page offers it.
+/// One config or key waiting, as the hand-over page offers it.
 struct Waiting {
     plane: &'static str,
+    /// `config` or `key`.
+    kind: &'static str,
     filename: String,
     handle: String,
 }
@@ -404,7 +406,7 @@ fn grant_read(roles: anyhow::Result<Vec<String>>) -> Option<bool> {
     }
 }
 
-/// **The two client configs held for the session, and the page that
+/// **The two client configs and two keys held for the session, and the page that
 /// offers them**, under `no-store`. The page carries the handles, never the
 /// configs.
 async fn hand_over(
@@ -440,13 +442,21 @@ async fn hand_over(
             plane,
             credential,
         );
-        let filename = format!("{}-{}-{}.toml", minted.r#box, minted.name, plane.as_str());
-        let handle = reservation.hold(session.session_id, filename.clone(), content);
-        waiting.push(Waiting {
-            plane: plane.as_str(),
-            filename,
-            handle,
-        });
+        let stem = format!("{}-{}-{}", minted.r#box, minted.name, plane.as_str());
+        // **Each connector's key is a file of its own** (the brief of
+        // 2026-11-27, child 6), handed over beside its config.
+        for (kind, filename, content) in [
+            ("config", format!("{stem}.toml"), content),
+            ("key", format!("{stem}.key"), credential.key_pem.clone()),
+        ] {
+            let handle = reservation.hold(session.session_id, filename.clone(), content);
+            waiting.push(Waiting {
+                plane: plane.as_str(),
+                kind,
+                filename,
+                handle,
+            });
+        }
     }
     match (HandoverPage {
         here: "register",
@@ -513,7 +523,7 @@ async fn register(store: Store, seams: &Seams, headers: HeaderMap, ask: Register
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    let Some(reservation) = seams.handover.reserve(2) else {
+    let Some(reservation) = seams.handover.reserve(4) else {
         return refused(&Refusal::HandoverFull);
     };
     let (policy, seams) = (seams.policy.clone(), seams.clone());
@@ -637,7 +647,7 @@ async fn rotate(store: Store, seams: &Seams, headers: HeaderMap, ask: RotateAsk)
     if agent.gate.state == CredentialState::None {
         return refused(&Refusal::NotEnrolled);
     }
-    let Some(reservation) = seams.handover.reserve(2) else {
+    let Some(reservation) = seams.handover.reserve(4) else {
         return refused(&Refusal::HandoverFull);
     };
     let (policy, seams) = (seams.policy.clone(), seams.clone());

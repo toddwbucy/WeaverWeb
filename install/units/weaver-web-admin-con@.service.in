@@ -1,6 +1,7 @@
 # admin-con for one agent, the instance being the agent's name (Spec 8.1).
 # weaver-web-stage renders this file: each @NAME@ is a parameter with no
-# default, kept outside this repository.
+# default, kept outside this repository. The group is the one the
+# connector's config and key are read through (Spec 8.1).
 #
 # A stop signals admin-con alone (KillMode=mixed), which waits within its
 # grace for a verb in flight; the stop timeout is the grace plus 60 seconds,
@@ -16,11 +17,12 @@ After=network-online.target
 [Service]
 Type=simple
 User=@ACCOUNT@
+Group=@GROUP@
 UMask=0077
 Environment=PATH=@ADMIN_PATH@
 KillMode=mixed
 TimeoutStopSec=1140
-ExecStart=@BINARIES@/admin-con --config @CONFIG_ROOT@/connectors/%i/admin-con.toml
+ExecStart=@BINARIES@/admin-con --config @CONFIG_ROOT@/connectors/%i/admin/admin-con.toml
 Restart=on-failure
 RestartSec=5
 

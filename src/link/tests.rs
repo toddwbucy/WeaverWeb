@@ -756,8 +756,8 @@ async fn a_door_frame_the_row_no_longer_takes_closes_the_connection() {
 
 /// **At most one row per box and name holds live credentials**, at the
 /// schema, and re-registering a live pair retires the previous row. The
-/// name is immutable at the schema too, and the box moves only through the
-/// replace-box write (Spec 2.12, `enrollment_tests`).
+/// name is immutable at the schema too, and the box never moves (Spec
+/// 2.12, migration `0035`, `enrollment_tests`).
 ///
 /// Perturbation: drop the partial unique index from migration 0010. The
 /// direct insert of a second live row for one box and name lands, and two
@@ -805,11 +805,8 @@ async fn at_most_one_live_row_per_box_and_name() {
         .execute(&lab.store.pool)
         .await;
     assert!(
-        moved
-            .unwrap_err()
-            .to_string()
-            .contains("moves only beside its history"),
-        "the box moves outside the replace-box write"
+        moved.unwrap_err().to_string().contains("never moves"),
+        "the box moved"
     );
 }
 
@@ -3699,8 +3696,8 @@ async fn a_shared_door_admits_both_planes_and_says_so() {
 
 /// **An admission on a plane a pairing set to `none` is refused
 /// `not_live`** (Spec 8, migration 0033): a gate connection that passed the
-/// handshake's lookup, on a row whose gate plane a replacement pairing then
-/// set to not enrolled, meets a fingerprint that is absent under the row's
+/// handshake's lookup, on a row whose gate plane is then set to not
+/// enrolled, as a pairing's row reads, meets a fingerprint that is absent under the row's
 /// lock, and is refused as a revoked one is, never as a store failure.
 ///
 /// Perturbation: read the fingerprint as a `String`, and the admission

@@ -97,15 +97,6 @@
   <form method="post" action="/pair/{{ setup_id }}/code">
     <label><input type="checkbox" name="compared" value="on"> The fingerprint the box shows is Weaver Web's, above, row by row and group for group</label>
     <label>Code <input type="text" name="code" autocomplete="off" spellcheck="false" maxlength="16"></label>
-    {%- if !pair.rows.is_empty() %}
-    <fieldset>
-      <legend>A live row holds this agent's name</legend>
-      <label><input type="radio" name="replace" value="" checked> Pair as a new row</label>
-      {%- for r in pair.rows %}
-      <label><input type="radio" name="replace" value="{{ r.agent_id }}"> Replace the box of <span class="mono">{{ r.agent_id }}</span>, which holds <span class="mono">{{ r.box }}</span>: that box's credentials end</label>
-      {%- endfor %}
-    </fieldset>
-    {%- endif %}
     <button type="submit">Pair</button>
   </form>
   {%- endmatch %}

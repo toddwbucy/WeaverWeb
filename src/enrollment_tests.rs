@@ -2,8 +2,8 @@
 //! conforms: web-a-pairing-naming-a-live-box-and-name-is-refused-and-retires-nothing
 //! conforms: web-a-lost-word-writes-no-row
 //! conforms: web-on-unknown-the-pairing-page-shows-what-the-write-made
-//! conforms: web-a-rows-box-changes-only-through-the-replace-box-write
-//! conforms: web-setup-describe-answers-replacement-true-after-a-replace-box-write-alone
+//! conforms: web-a-rows-box-never-moves
+//! conforms: web-setup-describe-carries-no-replacement
 //! conforms: web-a-setup-ask-is-refused-while-its-credentials-connection-stands-and-counts-for-nothing-in-presence
 //! conforms: web-the-setup-keeps-the-latest-report-of-each-stage-verbatim
 //! conforms: web-an-adopted-pair-connects
@@ -223,12 +223,8 @@ async fn enter(
     session: &str,
     setup: &str,
     code: &str,
-    replace: Option<&AgentId>,
 ) -> (StatusCode, axum::http::HeaderMap, String) {
-    let mut fields = vec![("compared", "on"), ("code", code)];
-    if let Some(id) = replace {
-        fields.push(("replace", id.as_str()));
-    }
+    let fields = [("compared", "on"), ("code", code)];
     send_as(
         rig.app(),
         "POST",
@@ -424,7 +420,7 @@ async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
-    let (status, headers, body) = enter(&rig, &ada, &setup, &code, None).await;
+    let (status, headers, body) = enter(&rig, &ada, &setup, &code).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     assert_eq!(headers[header::LOCATION], format!("/pair/{setup}"));
     let (heard, last) = the_box.await.unwrap();
@@ -564,7 +560,7 @@ async fn a_malformed_entry_is_no_miss_and_five_misses_close_the_field() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
 
-    let (status, _, body) = enter(&rig, &ada, &setup, "HWX5U0F74A", None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, "HWX5U0F74A").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(
         pair_audit(s, "pair").await,
@@ -594,7 +590,7 @@ async fn a_malformed_entry_is_no_miss_and_five_misses_close_the_field() {
         "0000000000"
     };
     for miss in 1..=5 {
-        let (status, _, body) = enter(&rig, &ada, &setup, wrong, None).await;
+        let (status, _, body) = enter(&rig, &ada, &setup, wrong).await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
         assert_eq!(
             pair_audit(s, "pair").await,
@@ -615,7 +611,7 @@ async fn a_malformed_entry_is_no_miss_and_five_misses_close_the_field() {
         "five misses close the field"
     );
     assert_eq!(closed.code_misses, 0, "the count starts again");
-    let (status, _, body) = enter(&rig, &ada, &setup, &right, None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &right).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("five misses"), "{body}");
     assert_eq!(rows_named(s, "karl").await, 0);
@@ -671,7 +667,7 @@ async fn the_authority_lock_is_held_across_the_boxs_word() {
         (heard, free, dialed.last_word().await)
     };
     let ((status, _, body), (heard, free, last)) =
-        tokio::join!(enter(&rig, &ada, &setup, &code, None), the_box);
+        tokio::join!(enter(&rig, &ada, &setup, &code), the_box);
     assert!(matches!(heard, Heard::Answer(_)), "{heard:?}");
     assert!(!free, "the lock was free while the box held its answer");
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
@@ -741,7 +737,7 @@ async fn entries_at_once_count_five_misses_and_compare_none_past_them() {
     let closed = s.setup(&setup).await.unwrap().unwrap();
     assert!(closed.code_closed(chrono::Utc::now()));
     assert_eq!(closed.code_misses, 0, "the count runs past five");
-    let (status, _, body) = enter(&rig, &ada, &setup, &right, None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &right).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("five misses"), "{body}");
     assert_eq!(rows_named(s, "karl").await, 0);
@@ -804,7 +800,7 @@ async fn a_box_whose_exchange_waits_on_the_authority_lock_hears_heartbeats() {
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
     let held = s.authority_lock().await.unwrap();
-    let ((status, _, body), ()) = tokio::join!(enter(&rig, &ada, &setup, &code, None), async {
+    let ((status, _, body), ()) = tokio::join!(enter(&rig, &ada, &setup, &code), async {
         // Past four cadences of the box's, the silence bound itself.
         tokio::time::sleep(SILENCE + Duration::from_secs(2)).await;
         drop(held);
@@ -839,7 +835,7 @@ async fn a_box_whose_exchange_waits_past_its_life_is_refused_busy() {
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
     let held = s.authority_lock().await.unwrap();
-    let entered = tokio::time::timeout(SOON, enter(&rig, &ada, &setup, &code, None)).await;
+    let entered = tokio::time::timeout(SOON, enter(&rig, &ada, &setup, &code)).await;
     drop(held);
     let (status, _, body) = entered.expect("the entry is answered within the box's life");
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
@@ -887,7 +883,7 @@ async fn a_box_whose_pairings_write_waits_hears_heartbeats_and_paired() {
         });
         last
     };
-    let ((status, _, body), last) = tokio::join!(enter(&rig, &ada, &setup, &code, None), the_box);
+    let ((status, _, body), last) = tokio::join!(enter(&rig, &ada, &setup, &code), the_box);
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     assert_eq!(last, LastWord::Paired);
 }
@@ -911,7 +907,7 @@ async fn a_pairing_naming_a_live_box_and_name_is_refused_and_retires_nothing() {
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(
         body.contains(r#"retire it on <a href="/admin/agents">the register</a>"#),
@@ -953,7 +949,7 @@ async fn a_request_whose_signature_is_another_keys_is_refused_at_the_exchange() 
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     let (heard, _) = the_box.await.unwrap();
     assert!(
         matches!(&heard, Heard::Refused(reason) if reason == "request_refused"),
@@ -981,7 +977,7 @@ async fn a_request_of_another_kind_is_refused_at_the_exchange() {
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     let (heard, _) = the_box.await.unwrap();
     assert!(
@@ -1008,7 +1004,7 @@ async fn a_lost_word_writes_no_row() {
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::NoWord));
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("nothing was written"), "{body}");
     assert!(
@@ -1037,13 +1033,15 @@ async fn a_lost_word_writes_no_row() {
 }
 
 /// **On unknown the pairing page shows what the write made** (Spec 8.2):
-/// after a committed `replace box` whose last word the box never read, the
-/// page shows the row's new box and the new certificates' fingerprints;
-/// after a write that did not commit, the old box and its credentials, and
-/// never the answer's fingerprints, which the box's unknown line carries
-/// whether the write committed or not.
+/// after a `pair` that did not commit, the page draws no row the write
+/// made and never the answer's fingerprints, which the box's unknown line
+/// carries whether the write committed or not; after a committed `pair`
+/// whose last word the box never read, the page shows the row's box and
+/// the answer's certificate's fingerprint.
 ///
-/// Perturbation: draw the answer's fingerprints in the rows' place.
+/// Perturbation: skip step 6's re-check of the session and the admin
+/// grant, and the write that should not commit lands its row, the page
+/// answering it a pairing (measured 2026-11-27).
 #[tokio::test]
 async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
     let Some(rig) = rig().await else { return };
@@ -1053,7 +1051,6 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
 
     // A write that does not commit: the admin's session ends between the
     // answer and the box's word, so step 6's re-check refuses.
-    let karl = registered(s, "box-old", "karl", &rig.authority).await;
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let keys = box_keys("box-new");
@@ -1073,25 +1070,20 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
         dialed.written().await.unwrap();
         (heard, dialed.last_word().await)
     });
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, Some(&karl)).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     let (heard, last) = lost.await.unwrap();
     assert_eq!(last, LastWord::Unknown, "the box heard a last word");
     let answer = answer_of(&heard);
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert!(body.contains("nothing was written"), "{body}");
     assert!(
-        body.contains(&grouped(&"1".repeat(64))),
-        "the old box's credential: {body}"
-    );
-    assert!(body.contains("box-old"), "{body}");
-    assert!(
         !body.contains(&grouped(&fingerprint_of(&answer.admin))),
         "the page shows the answer's fingerprint: {body}"
     );
-    let row = s.agent(&karl).await.unwrap().unwrap();
-    assert_eq!(row.r#box, "box-old");
+    assert!(!body.contains("box-new"), "a row the write made: {body}");
+    assert_eq!(rows_named(s, "karl").await, 0);
 
-    // A committed replacement whose last word the box never read.
+    // A committed `pair` whose last word the box never read.
     let (status, headers, _) = crate::sign_in_tests::sign_in(&rig.app, &mut key, "ada").await;
     assert_eq!(status, StatusCode::OK);
     let ada = crate::sign_in_tests::bearer(&headers);
@@ -1099,7 +1091,7 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::WordThenGone));
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, Some(&karl)).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (heard, _) = the_box.await.unwrap();
     let answer = answer_of(&heard);
@@ -1109,19 +1101,24 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
         "{pairing}"
     );
     assert!(pairing.contains("box-new"), "{pairing}");
-    assert!(!pairing.contains(&grouped(&"1".repeat(64))), "{pairing}");
+    assert_eq!(rows_named(s, "karl").await, 1);
 }
 
-/// **A row's box changes only through the replace-box write, and the row
-/// keeps the box it held** (Spec 2.12, 8.2): the replacement keeps the
-/// row's identity, sets its box, revokes the old box's credentials and
-/// keeps the old box in the history; any other write moving a box is
-/// refused by the schema.
+/// **A row's box never moves, and no new `replace box` is written** (Spec
+/// 2.12, 8.2; the operator's ruling of 2026-11-27): the Pair page of a
+/// setup begun before New agent, whose name a live row holds, draws the row
+/// and offers no replacement; a pairing claiming that row's box is refused
+/// `box_and_name_live` and writes nothing; a pairing from another box pairs
+/// as a new row, the live row untouched. The schema refuses a move of a
+/// row's box, an `agent_box` row and a setup inserted or updated as
+/// `replace box`, while rows written so before the ruling stay readable and
+/// an update leaving their `paired_as` as it was passes.
 ///
-/// Perturbation: write the new box without the history's row, and the old
-/// box leaves the record.
+/// Perturbations: offer the replacement's fieldset again, and the page
+/// test finds it; drop each refusal of migration `0035`, and its write
+/// lands (each measured 2026-11-27).
 #[tokio::test]
-async fn a_replacement_keeps_the_box_the_row_held() {
+async fn a_rows_box_never_moves_and_no_new_replace_box_is_written() {
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
@@ -1130,45 +1127,139 @@ async fn a_replacement_keeps_the_box_the_row_held() {
     let setup = setup.unwrap();
     let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(
-        pairing.contains(&format!(r#"name="replace" value="{}""#, karl.as_str())),
-        "the page asks whether to replace the live row's box: {pairing}"
+        pairing.contains(karl.as_str()),
+        "the live row is drawn: {pairing}"
     );
-    assert!(pairing.contains("that box's credentials end"), "{pairing}");
+    assert!(!pairing.contains(r#"name="replace""#), "{pairing}");
+    assert!(!pairing.contains("Replace the box"), "{pairing}");
+
+    // The live row's own box: refused, nothing written.
+    let keys = box_keys("box-old");
+    let dialed = dial(&rig, &keys.claim).await;
+    let code = dialed.code().to_string();
+    let refused_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (heard, _) = refused_box.await.unwrap();
+    assert!(
+        matches!(&heard, Heard::Refused(reason) if reason == "box_and_name_live"),
+        "{heard:?}"
+    );
+    assert_eq!(rows_named(s, "karl").await, 1);
+
+    // Another box: a new row, the live row as it was.
     let keys = box_keys("box-new");
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
-    let the_box = tokio::spawn(the_box(dialed, Box::Whole));
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, Some(&karl)).await;
+    let paired_box = tokio::spawn(the_box(dialed, Box::Whole));
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
-    let (heard, last) = the_box.await.unwrap();
+    let (heard, last) = paired_box.await.unwrap();
     assert_eq!(last, Some(LastWord::Paired));
     let answer = answer_of(&heard);
-    assert_eq!(answer.agent_id, karl.as_str(), "the row keeps its identity");
-    let row = s.agent(&karl).await.unwrap().unwrap();
-    assert_eq!(row.r#box, "box-new");
-    assert_eq!(
-        row.admin.fingerprint.as_deref(),
-        Some(fingerprint_of(&answer.admin).as_str())
-    );
-    assert_eq!(row.gate.state, CredentialState::None);
-    assert!(row.setup_running);
-    let held = s.boxes_held(&karl).await.unwrap();
-    assert_eq!(
-        held.iter().map(|(b, _)| b.as_str()).collect::<Vec<_>>(),
-        ["box-old"],
-        "the old box left the record"
-    );
-    assert_eq!(rows_named(s, "karl").await, 1);
+    assert_ne!(answer.agent_id, karl.as_str(), "a new agent");
+    assert_eq!(rows_named(s, "karl").await, 2);
+    let old = s.agent(&karl).await.unwrap().unwrap();
+    assert_eq!(old.r#box, "box-old");
+    assert_eq!(old.admin.state, CredentialState::Live);
     assert_eq!(
         s.setup(&setup).await.unwrap().unwrap().paired,
-        Some((karl.as_str().to_owned(), "replace box".to_owned()))
+        Some((answer.agent_id.clone(), "pair".to_owned()))
     );
-    assert_eq!(pair_audit(s, "replace box").await, (1, 1, 0));
+    assert_eq!(pair_audit(s, "pair").await.1, 1);
+    assert_eq!(pair_audit(s, "replace box").await, (0, 0, 0));
+
+    // The schema's three refusals.
     let moved = sqlx::query("UPDATE agent SET box = 'box-other' WHERE agent_id = $1")
         .bind(karl.as_str())
         .execute(&s.pool)
         .await;
-    assert!(moved.is_err(), "a box moved outside the replace-box write");
+    assert!(
+        moved.is_err_and(|e| e.to_string().contains("never moves")),
+        "a row's box moved"
+    );
+    let kept =
+        sqlx::query("INSERT INTO agent_box (agent_id, box, setup_id) VALUES ($1, 'box-x', $2)")
+            .bind(karl.as_str())
+            .bind(&setup)
+            .execute(&s.pool)
+            .await;
+    assert!(
+        kept.is_err_and(|e| e.to_string().contains("agent_box takes no new row")),
+        "an agent_box row was written"
+    );
+    let replaced =
+        sqlx::query("UPDATE agent_setup SET paired_as = 'replace box' WHERE setup_id = $1")
+            .bind(&setup)
+            .execute(&s.pool)
+            .await;
+    assert!(
+        replaced.is_err_and(|e| e.to_string().contains("every pairing writes a new row")),
+        "a setup paired as replace box"
+    );
+    // The insert branch: a new setup written as `replace box`, of a name no
+    // open setup holds and every other column the setup's own, so the
+    // trigger alone stands between it and the table.
+    let inserted = sqlx::query(
+        "INSERT INTO agent_setup (setup_id, name, begun_by, agent_id, paired_as, paired_at) \
+         SELECT 'st-00000000000000aa', 'zed', begun_by, agent_id, 'replace box', paired_at \
+         FROM agent_setup WHERE setup_id = $1",
+    )
+    .bind(&setup)
+    .execute(&s.pool)
+    .await;
+    assert!(
+        matches!(&inserted, Err(e) if e.to_string().contains("every pairing writes a new row")),
+        "a setup inserted as replace box: {inserted:?}"
+    );
+
+    // Rows written so before the ruling: the refusals set aside for their
+    // writing alone, as a store migrated from before 0035 holds them.
+    let mut tx = s.pool.begin().await.unwrap();
+    for off in [
+        "ALTER TABLE agent_setup DISABLE TRIGGER agent_setup_pairs_as_new",
+        "ALTER TABLE agent_box DISABLE TRIGGER agent_box_refuses_an_insert",
+    ] {
+        sqlx::query(off).execute(&mut *tx).await.unwrap();
+    }
+    sqlx::query("UPDATE agent_setup SET paired_as = 'replace box' WHERE setup_id = $1")
+        .bind(&setup)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_box (agent_id, box, setup_id) VALUES ($1, 'box-older', $2)")
+        .bind(karl.as_str())
+        .bind(&setup)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    for on in [
+        "ALTER TABLE agent_setup ENABLE TRIGGER agent_setup_pairs_as_new",
+        "ALTER TABLE agent_box ENABLE TRIGGER agent_box_refuses_an_insert",
+    ] {
+        sqlx::query(on).execute(&mut *tx).await.unwrap();
+    }
+    tx.commit().await.unwrap();
+    assert_eq!(
+        s.setup(&setup).await.unwrap().unwrap().paired,
+        Some((answer.agent_id.clone(), "replace box".to_owned())),
+        "a setup written before the ruling reads as written"
+    );
+    let held: Vec<String> = sqlx::query_scalar("SELECT box FROM agent_box WHERE agent_id = $1")
+        .bind(karl.as_str())
+        .fetch_all(&s.pool)
+        .await
+        .unwrap();
+    assert_eq!(held, ["box-older"], "the history reads as written");
+    // An update naming `paired_as` and leaving it as it was fires the
+    // trigger and passes.
+    sqlx::query(
+        "UPDATE agent_setup SET paired_as = paired_as, version = version + 1 WHERE setup_id = $1",
+    )
+    .bind(&setup)
+    .execute(&s.pool)
+    .await
+    .expect("an update leaving paired_as as it was passes");
 }
 
 // ---------------------------------------------------------------------------
@@ -1232,7 +1323,6 @@ async fn enrolled_on_box(
     setup: &str,
     dir: &std::path::Path,
     r#box: &str,
-    replace: Option<&AgentId>,
 ) -> AnswerFile {
     let mut p = captured();
     let config = dir.join("admin-con.toml");
@@ -1278,7 +1368,7 @@ async fn enrolled_on_box(
     );
     assert!(waiting["expires_in_secs"].as_u64().unwrap() > 0);
     let code = waiting["code"].as_str().unwrap().to_owned();
-    let (status, _, body) = enter(rig, session, setup, &code, replace).await;
+    let (status, _, body) = enter(rig, session, setup, &code).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let ended = tokio::time::timeout(SOON, pair).await.unwrap().unwrap();
     assert_eq!(ended, Status::Done);
@@ -1373,7 +1463,7 @@ async fn an_adopted_admin_con_connects_and_its_row_reads_admin_alone() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let id: AgentId = answer.agent_id.parse().unwrap();
     let link = link_of(&on_box.path().join("admin-con.toml"));
     let connection = match link.connect(hello(Plane::Admin)).await {
@@ -1407,27 +1497,28 @@ async fn an_adopted_admin_con_connects_and_its_row_reads_admin_alone() {
     connection.close().await;
 }
 
-/// **`setup describe` answers `replacement` true after a replace-box
-/// write alone** (Spec 8.3): false after a `pair` and true after a
-/// `replace box`, under the replacement's own credential, and the replaced
-/// box's credential is refused. The drive setup reads no `replacement`
-/// (the operator's ruling of 2026-11-24).
+/// **`setup describe` carries no member on how the setup paired** (Spec
+/// 8.3): after a `pair` it answers the row's agent and identity and no
+/// `replacement`; a second setup of the name paired from another box, as a
+/// new image would, is a new agent, and each box's describe answers its own
+/// row.
 ///
-/// Perturbation: answer false after a replacement, and the test fails.
+/// Perturbation: send the member again, and the test fails (measured
+/// 2026-11-27).
 #[tokio::test]
-async fn setup_describe_answers_replacement_after_replace_box_alone() {
+async fn setup_describe_carries_no_member_on_how_the_setup_paired() {
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, first) = begin(rig.store(), &ada, "karl").await;
     let first = first.unwrap();
     let old_box = crate::test_dir::tempdir().unwrap();
-    let answer = enrolled_on_box(&rig, &ada, &first, old_box.path(), "box-a", None).await;
+    let answer = enrolled_on_box(&rig, &ada, &first, old_box.path(), "box-a").await;
     let old_admin = old_box.path().join("admin-con.toml");
     let (status, described) = describe(&old_admin).await;
     assert_eq!(status, Status::Done, "{described}");
     assert_eq!(described["event"], "described");
-    assert_eq!(described["replacement"], false);
+    assert!(described.get("replacement").is_none(), "{described}");
     assert_eq!(described["agent"], "karl");
     assert_eq!(described["agent_id"], answer.agent_id.as_str());
     assert_eq!(described["bytes"], 0);
@@ -1437,18 +1528,16 @@ async fn setup_describe_answers_replacement_after_replace_box_alone() {
     confirmed_at_the_schema(s, &first).await;
     let (_, _, second) = begin(rig.store(), &ada, "karl").await;
     let second = second.unwrap();
-    let karl: AgentId = answer.agent_id.parse().unwrap();
     let new_box = crate::test_dir::tempdir().unwrap();
-    let replaced = enrolled_on_box(&rig, &ada, &second, new_box.path(), "box-b", Some(&karl)).await;
-    assert_eq!(
-        replaced.agent_id, answer.agent_id,
-        "the row keeps its identity"
-    );
+    let again = enrolled_on_box(&rig, &ada, &second, new_box.path(), "box-b").await;
+    assert_ne!(again.agent_id, answer.agent_id, "a new agent");
     let (status, described) = describe(&new_box.path().join("admin-con.toml")).await;
     assert_eq!(status, Status::Done, "{described}");
-    assert_eq!(described["replacement"], true);
-    let (status, refused) = describe(&old_admin).await;
-    assert_eq!(status, Status::Refused, "{refused}");
+    assert_eq!(described["agent_id"], again.agent_id.as_str());
+    assert!(described.get("replacement").is_none(), "{described}");
+    let (status, described) = describe(&old_admin).await;
+    assert_eq!(status, Status::Done, "{described}");
+    assert_eq!(described["agent_id"], answer.agent_id.as_str());
 }
 
 /// **A setup ask is refused while its credential's connection stands, and
@@ -1466,7 +1555,7 @@ async fn a_setup_ask_beside_a_standing_connection_is_refused_and_counts_for_noth
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let id: AgentId = answer.agent_id.parse().unwrap();
     let admin_config = on_box.path().join("admin-con.toml");
     for _ in 0..2 {
@@ -1522,7 +1611,7 @@ async fn the_setup_keeps_its_one_report_verbatim_a_second_run_replacing_it() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let admin_config = on_box.path().join("admin-con.toml");
     let first = "{ \"cards\" : [1,  2] }\n";
     let again = "{\"cards\":[],\"disks\":[{\"model\":\"\\u00e9\"}]}";
@@ -1881,7 +1970,7 @@ async fn a_setup_ask_the_store_holds_past_the_bound_is_refused_and_lets_its_clai
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     // A row paired before the report crossed with the pairing: its setup
     // holds none, so the held report is the only one that could land.
     sqlx::query("DELETE FROM agent_setup_report WHERE setup_id = $1")
@@ -2009,7 +2098,7 @@ async fn a_setup_ask_whose_admission_waits_is_refused_within_the_boxs_bound() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let config = on_box.path().join("admin-con.toml");
     rig.listener.set_setup_answer_bound(Duration::from_secs(1));
     let the_box = SILENCE / 2;
@@ -2066,7 +2155,7 @@ async fn a_setup_ask_whose_lookup_waits_is_refused_within_the_boxs_bound() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let config = on_box.path().join("admin-con.toml");
     rig.listener.set_setup_answer_bound(Duration::from_secs(1));
     let the_box = SILENCE / 2;
@@ -2110,7 +2199,7 @@ async fn a_setup_ask_whose_lookup_and_admission_wait_is_refused_within_the_boxs_
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let config = on_box.path().join("admin-con.toml");
     rig.listener.set_setup_answer_bound(Duration::from_secs(1));
     let the_box = Duration::from_millis(1400);
@@ -2158,7 +2247,7 @@ async fn a_setup_ask_whose_lookup_fails_is_refused_store_unavailable() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let config = on_box.path().join("admin-con.toml");
 
     rig.listener.fail_next_lookup();
@@ -2297,7 +2386,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     );
     let (ada, setup) = crate::setup_models_tests::setup_unpaired_of(&rig, "karl").await;
     let on_box = crate::test_dir::tempdir().unwrap();
-    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let admin_config = on_box.path().join("admin-con.toml");
     let placement = format!("/setup/{setup}/placement");
     let confirm = format!("/setup/{setup}/confirm");
@@ -2585,7 +2674,7 @@ async fn a_setup_with_no_adapter_confirms_a_tuple_with_none() {
     );
     let (ada, setup) = crate::setup_models_tests::setup_unpaired_of(&rig, "karl").await;
     let on_box = crate::test_dir::tempdir().unwrap();
-    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let admin_config = on_box.path().join("admin-con.toml");
     sent(
         &admin_config,
@@ -2733,7 +2822,7 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     let config = on_box.path().join("admin-con.toml");
     let mark = logs.mark();
 
@@ -2803,7 +2892,7 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let on_box = crate::test_dir::tempdir().unwrap();
-    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
+    enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a").await;
     // A row paired before the report crossed with the pairing: its setup
     // holds none, which is the pane's waiting state.
     sqlx::query("DELETE FROM agent_setup_report WHERE setup_id = $1")
@@ -2973,7 +3062,7 @@ async fn the_report_lands_with_the_row_in_one_transaction() {
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
-    let (status, _, body) = enter(&rig, &ada, &setup, &code, None).await;
+    let (status, _, body) = enter(&rig, &ada, &setup, &code).await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (_, last) = the_box.await.unwrap();
     assert_eq!(last, Some(LastWord::Paired));

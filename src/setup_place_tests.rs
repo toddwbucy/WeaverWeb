@@ -1405,7 +1405,6 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
         (unpicked.models, unpicked.bytes, unpicked.laying),
         (None, 0, None)
     );
-    assert!(!unpicked.replacement);
     assert_eq!(
         s.described(&karl, &"9".repeat(64)).await.unwrap(),
         Err(crate::link::frames::Refusal::NotLive),

@@ -1,6 +1,6 @@
 //! conforms: web-a-pairing-naming-a-live-box-and-name-is-refused-and-retires-nothing
 //! conforms: web-a-lost-word-writes-no-row
-//! conforms: web-a-rows-box-changes-only-through-the-replace-box-write
+//! conforms: web-a-rows-box-never-moves
 //!
 //! **The exchange** (Spec 8.2): once a code matched one waiting connection,
 //! the console takes six steps under the authority lock, held from the first
@@ -15,8 +15,8 @@
 //! 4. the answer sent;
 //! 5. the box's word awaited within `HANDSHAKE_SECS`, and **a lost word
 //!    writes nothing**;
-//! 6. the row written, or for `replace box` the row's box set beside the
-//!    box it held, with the setup's link and the first frame's reports, in one identity transaction that
+//! 6. a new row written, never a row moved to this box, with the setup's
+//!    link and the first frame's reports, in one identity transaction that
 //!    re-checks the session and the admin grant and commits with the
 //!    audit's outcome (`Store::pairing_write_on`), and then the last word.
 //!
@@ -52,9 +52,8 @@ pub struct Exchange<'a> {
 /// **How an exchange ended.**
 #[derive(Debug)]
 pub enum Outcome {
-    /// The row stands with the answer's certificate live and the gate
-    /// plane not enrolled, and the box was sent the last word. A replacement's old fingerprints are
-    /// revoked, their connections closed by the store's notification.
+    /// The new row stands with the answer's certificate live and the gate
+    /// plane not enrolled, and the box was sent the last word.
     Paired { agent_id: AgentId },
     /// Refused at step 1 or 6, the box told why.
     Refused(PairingRefusal),
@@ -198,7 +197,7 @@ pub async fn run(lock: &mut AuthorityLock, x: Exchange<'_>, taken: Taken) -> End
     .await;
     let mut connection = kept.resume().await;
     ended(match written {
-        Ok(Ok(_revoked)) => {
+        Ok(Ok(())) => {
             if let Some(connection) = connection.as_mut() {
                 close_with(connection, &PairToBox::Paired, write_bound).await;
             }

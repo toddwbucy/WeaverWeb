@@ -383,9 +383,6 @@ pub const REPORT_BOUND: usize = 64 * 1024;
 pub struct Described {
     pub agent: String,
     pub agent_id: String,
-    /// Whether the setup's pairing was the replace-box write. The drive
-    /// setup does not read it (Spec 8.3).
-    pub replacement: bool,
     /// One entry per role picked, `decoder` and `adapter`, absent until the
     /// models page's first pick.
     #[serde(default, skip_serializing_if = "Option::is_none")]

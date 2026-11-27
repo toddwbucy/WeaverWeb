@@ -139,9 +139,10 @@ struct BoxKeys {
 }
 
 /// A `pairing` stage report naming the box, which no page draws before
-/// the box's code matches.
+/// the box's code matches. Its `format` reads as `weaver-survey/2`, the
+/// one member the first frame reads.
 fn report_claimed(r#box: &str) -> String {
-    format!("{{\"claimed\":\"report-of-{box}\"}}")
+    format!("{{\"format\":\"weaver-survey/2\",\"claimed\":\"report-of-{box}\"}}")
 }
 
 fn request_of(key: &KeyPair) -> String {
@@ -1235,7 +1236,6 @@ async fn enrolled_on_box(
         console: rig.listener().address().to_string(),
         admin_request: dir.join("admin.request"),
         report: dir.join("pairing.json"),
-        drives_report: None,
         local_address: None,
         answer: dir.join("answer.json"),
         r#box: Some(r#box.into()),
@@ -1495,17 +1495,16 @@ async fn a_setup_ask_beside_a_standing_connection_is_refused_and_counts_for_noth
     standing.close().await;
 }
 
-/// **The setup keeps the latest report of each stage, verbatim** (Spec
-/// 8.3): a pairing report, a drives report, and the pairing report run
-/// again, which replaces the pairing's and leaves the drives'. A report past
-/// the bound is refused `too_large` on the box before any dial and at the
-/// listener too, a confirmed setup's `setup_closed`, and a row no pairing
-/// linked `no_setup`.
+/// **The setup keeps its one report, verbatim** (Spec 8.3): a report, and
+/// a second run's report, which replaces the row (the operator's ruling of
+/// 2026-11-25). A report past the bound is refused `too_large` on the box
+/// before any dial and at the listener too, a confirmed setup's
+/// `setup_closed`, and a row no pairing linked `no_setup`.
 ///
-/// Perturbation: keep one report per setup, and the pairing report run
-/// again replaces the drives stage's.
+/// Perturbation: insert a row per report, and the second run's leaves the
+/// first beside it.
 #[tokio::test]
-async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
+async fn the_setup_keeps_its_one_report_verbatim_a_second_run_replacing_it() {
     let Some(rig) = rig().await else { return };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
@@ -1515,14 +1514,9 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
     let answer = enrolled_on_box(&rig, &ada, &setup, on_box.path(), "box-a", None).await;
     let admin_config = on_box.path().join("admin-con.toml");
     let first = "{ \"cards\" : [1,  2] }\n";
-    let drives = "{\"disks\":[{\"model\":\"\\u00e9\"}]}";
-    let again = "{\"cards\":[]}";
-    for (stage, text) in [
-        (Stage::Pairing, first),
-        (Stage::Drives, drives),
-        (Stage::Pairing, again),
-    ] {
-        let (status, line) = report(&admin_config, stage, text.as_bytes()).await;
+    let again = "{\"cards\":[],\"disks\":[{\"model\":\"\\u00e9\"}]}";
+    for text in [first, again] {
+        let (status, line) = report(&admin_config, Stage::Pairing, text.as_bytes()).await;
         assert_eq!(status, Status::Done, "{line}");
         assert_eq!(line["event"], "accepted");
     }
@@ -1533,18 +1527,12 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
         .into_iter()
         .map(|(stage, text, _)| (stage, text))
         .collect();
-    assert_eq!(
-        kept,
-        [
-            ("pairing".into(), again.into()),
-            ("drives".into(), drives.into())
-        ]
-    );
+    assert_eq!(kept, [("pairing".into(), again.into())]);
 
     // Past the bound: refused on the box, and at the listener for a client
-    // that skips the box's check, the kept reports unchanged.
+    // that skips the box's check, the kept report unchanged.
     let large = format!("{{\"x\":\"{}\"}}", "a".repeat(REPORT_BOUND));
-    let (status, line) = report(&admin_config, Stage::Drives, large.as_bytes()).await;
+    let (status, line) = report(&admin_config, Stage::Pairing, large.as_bytes()).await;
     assert_eq!(
         (status, line["reason"].as_str()),
         (Status::Refused, Some("too_large"))
@@ -1554,7 +1542,7 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
             agent: "karl".into(),
             plane: Plane::Admin,
             ask: SetupAsk::Report {
-                stage: Stage::Drives,
+                stage: Stage::Pairing,
                 report: large,
             },
         })
@@ -1568,16 +1556,17 @@ async fn the_setup_keeps_the_latest_report_of_each_stage_verbatim() {
         ),
         "the listener refuses a report past the bound"
     );
-    let (status, line) = report(&admin_config, Stage::Drives, b"[1]").await;
+    let (status, line) = report(&admin_config, Stage::Pairing, b"[1]").await;
     assert_eq!(
         (status, line["event"].as_str()),
         (Status::Usage, Some("usage"))
     );
-    assert_eq!(s.setup_reports(&setup).await.unwrap().len(), 2);
+    assert_eq!(s.setup_reports(&setup).await.unwrap().len(), 1);
+    assert_eq!(s.setup_reports(&setup).await.unwrap()[0].1, again);
 
     // A confirmed setup never changes, and its describe still answers.
     confirmed_at_the_schema(s, &setup).await;
-    let (status, line) = report(&admin_config, Stage::Drives, b"{}").await;
+    let (status, line) = report(&admin_config, Stage::Pairing, b"{}").await;
     assert_eq!(
         (status, line["reason"].as_str()),
         (Status::Refused, Some("setup_closed"))
@@ -1625,12 +1614,15 @@ async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
     );
     let (out, _) = p.into_inner();
     std::fs::write(dir.path().join("admin.request"), out).unwrap();
-    std::fs::write(dir.path().join("pairing.json"), "{}").unwrap();
+    std::fs::write(
+        dir.path().join("pairing.json"),
+        r#"{"format":"weaver-survey/2"}"#,
+    )
+    .unwrap();
     let args = PairArgs {
         console: rig.listener.address().to_string(),
         admin_request: dir.path().join("admin.request"),
         report: dir.path().join("pairing.json"),
-        drives_report: None,
         local_address: None,
         answer: dir.path().join("answer.json"),
         r#box: Some("box-a".into()),
@@ -2261,13 +2253,13 @@ async fn version_of(s: &Store, setup: &str) -> String {
 
 /// **The reports a box sends feed the setup's pages, end to end** (Spec
 /// 6.2, 8.3): a box enrolled against the real listener sends `setup report`
-/// at each stage through it, and the pages read the kept reports through
-/// the survey's reader. The placement page offers the pairing report's one
-/// card, then the drives report's two. Confirm holds for a drive not
+/// through it, a second run's replacing the first, and the pages read the
+/// kept report through the survey's reader. The placement page offers the
+/// first report's one card, then the second's two. Confirm holds for a drive not
 /// mounted, for a state drive one byte under 9 GiB of filesystem, and for a
 /// kept device a later report lacks, naming each, and its post writes
 /// nothing; the directories page draws the first two on the drive, and the
-/// placement page names the lacking card. Once the drives report stands,
+/// placement page names the lacking card. Once a laid report stands,
 /// its models drive short of the picks' need a warning on the directories page
 /// and no hold, Confirm writes the tuple with the box's members typed as
 /// ruled, and the box's `setup describe` reads the laying back with the
@@ -2307,7 +2299,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     let card =
         |n: u32, model: &str| format!(r#"name="device" value="{n}"> Card {n}: {model}</label>"#);
 
-    // The pairing stage's report, one card: the placement page offers it.
+    // The report, one card: the placement page offers it.
     let pairing = edited_report(crate::setup_place_tests::pairing_report(), |v| {
         v["cards"] = serde_json::json!([v["cards"][0].clone()]);
     });
@@ -2316,14 +2308,14 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     assert!(offered.contains(&card(0, "card-a")), "{offered}");
     assert!(!offered.contains("Card 1:"), "{offered}");
 
-    // The drives stage's report, the models drive not mounted: its two cards
+    // A second run's report, the models drive not mounted: its two cards
     // are offered, and Confirm holds naming the drive.
-    let unmounted = edited_report(crate::setup_place_tests::drives_report(), |v| {
+    let unmounted = edited_report(crate::setup_place_tests::laid_pairing_report(), |v| {
         v["drives"][1] = serde_json::json!(
-            {"role": "models", "mount_point": "/mnt/weaver/models", "mounted": false}
+            {"role": "models", "mount_point": "/srv/weaver-models", "mounted": false}
         );
     });
-    sent(&admin_config, Stage::Drives, &unmounted).await;
+    sent(&admin_config, Stage::Pairing, &unmounted).await;
     let offered = read(placement.clone()).await;
     assert!(offered.contains(&card(0, "card-a")), "{offered}");
     assert!(offered.contains(&card(1, "card-b")), "{offered}");
@@ -2413,7 +2405,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
             assert_eq!(rig.store().deployment_tuple(&setup).await.unwrap(), None);
         }
     };
-    held_for("the models drive at /mnt/weaver/models is not mounted").await;
+    held_for("the models drive at /srv/weaver-models is not mounted").await;
     let drives = read(format!("/setup/{setup}/directories")).await;
     assert!(
         drives.contains(
@@ -2423,10 +2415,10 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     );
 
     // The state drive one byte under the figure holds Confirm.
-    let small_state = edited_report(crate::setup_place_tests::drives_report(), |v| {
+    let small_state = edited_report(crate::setup_place_tests::laid_pairing_report(), |v| {
         v["drives"][0]["bytes"] = serde_json::json!(crate::box_report::STATE_DRIVE_FLOOR - 1);
     });
-    sent(&admin_config, Stage::Drives, &small_state).await;
+    sent(&admin_config, Stage::Pairing, &small_state).await;
     held_for("under 9 GiB").await;
     let drives = read(format!("/setup/{setup}/directories")).await;
     assert!(
@@ -2438,24 +2430,26 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     );
 
     // A later report lacking a kept device holds Confirm, naming its ordinal.
-    let one_card = edited_report(crate::setup_place_tests::drives_report(), |v| {
+    let one_card = edited_report(crate::setup_place_tests::laid_pairing_report(), |v| {
         v["cards"] = serde_json::json!([v["cards"][0].clone()]);
     });
-    sent(&admin_config, Stage::Drives, &one_card).await;
+    sent(&admin_config, Stage::Pairing, &one_card).await;
     held_for("card 1 is not among the survey's cards").await;
     let offered = read(placement.clone()).await;
     assert!(
-        offered.contains(r#"<span class="status fail">lacking</span> Card 1 is kept, and the drives stage's report lacks it"#),
+        offered.contains(
+            r#"<span class="status fail">lacking</span> Card 1 is kept, and the report lacks it"#
+        ),
         "{offered}"
     );
 
-    // The drives report as it stands but for the models drive's free space,
+    // The laid report as it stands but for the models drive's free space,
     // 1 byte, under the picks' need: a warning, and Confirm stands and
     // writes the tuple.
-    let short = edited_report(crate::setup_place_tests::drives_report(), |v| {
+    let short = edited_report(crate::setup_place_tests::laid_pairing_report(), |v| {
         v["drives"][1]["free_bytes"] = serde_json::json!(1);
     });
-    sent(&admin_config, Stage::Drives, &short).await;
+    sent(&admin_config, Stage::Pairing, &short).await;
     let drives = read(format!("/setup/{setup}/directories")).await;
     assert!(
         drives.contains(
@@ -2497,7 +2491,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
     );
     let confirmed = s.deployment_tuple(&setup).await.unwrap().unwrap();
     let members = &confirmed.tuple.box_members;
-    assert_eq!(members.report.stage, "drives");
+    assert_eq!(members.report.stage, "pairing");
     assert_eq!(members.image.version, "2.0");
     assert_eq!(members.driver_version, "620.70.06");
     assert_eq!(members.cuda_runtime_version, "13.4.92");
@@ -2547,8 +2541,9 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
 }
 
 /// **A setup with no adapter confirms a tuple with none, end to end** (Spec
-/// 6.2, 8.3): a box enrolled against the real listener sends its pairing
-/// and drives reports through it. The adapter picked is named among the
+/// 6.2, 8.3): a box enrolled against the real listener sends its report
+/// through it, then a second run's report with its drives mounted, which
+/// replaces the first. The adapter picked is named among the
 /// models the box's `setup describe` reads, and once dropped it is not, the
 /// decoder named alone. Confirm stands with the adapter's place reading none
 /// picked and no scale row, the tuple holds no adapter and the base's
@@ -2589,8 +2584,8 @@ async fn a_setup_with_no_adapter_confirms_a_tuple_with_none() {
     .await;
     sent(
         &admin_config,
-        Stage::Drives,
-        &crate::setup_place_tests::drives_report(),
+        Stage::Pairing,
+        &crate::setup_place_tests::laid_pairing_report(),
     )
     .await;
     let models_of = |line: &serde_json::Value| -> Vec<String> {
@@ -2765,8 +2760,8 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 
     sent(
         &config,
-        Stage::Drives,
-        &crate::setup_place_tests::drives_report(),
+        Stage::Pairing,
+        &crate::setup_place_tests::laid_pairing_report(),
     )
     .await;
     assert_eq!(
@@ -2785,9 +2780,10 @@ async fn a_refused_reports_arrival_is_logged_once_with_its_detail_escaped() {
 /// 2026-11-24). A refused pairing report is drawn refused by its cause on
 /// the Pair page, and the devices are refused naming it. A pairing report whose
 /// machine's product holds a script element is drawn read, the value
-/// escaped, and the devices are read from it. A refused drives report is
-/// drawn refused, and Confirm holds naming it. A drives report that reads
-/// is drawn with each drive and its judgments.
+/// escaped, and the devices are read from it. A refused report sent again
+/// is drawn refused on the directories page, and Confirm holds naming it.
+/// A report with its drives mounted that reads is drawn with each drive and
+/// its judgments.
 #[tokio::test]
 async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     use crate::setup_panes_tests::{pane, status};
@@ -2858,20 +2854,20 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     assert!(address.contains("<tr><th>Address</th>"), "{address}");
     assert!(!shown.contains("The console's link"), "{shown}");
 
-    let refused = r#"{"format":"weaver-survey/2"}"#;
+    let refused = r#"{"format":"weaver-survey/9"}"#;
     sent(&config, Stage::Pairing, refused).await;
     let shown = page_of("pair").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, pairing);
     assert_eq!(status(report), mark("fail", "refused"));
     assert!(report.contains("Refused for cause 4: "), "{report}");
-    assert!(!shown.contains("weaver-survey/2"), "{shown}");
+    assert!(!shown.contains("weaver-survey/9"), "{shown}");
     let shown = page_of("placement").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let held = pane(&shown, devices);
     assert_eq!(status(held), mark("fail", "refused"));
     assert!(
-        held.contains("The pairing stage's report is refused for cause 4: "),
+        held.contains("The report is refused for cause 4: "),
         "{held}"
     );
 
@@ -2896,16 +2892,11 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let offered = pane(&shown, devices);
     assert_eq!(status(offered), mark("ok", "read"));
     assert!(
-        offered.contains(r#"<span class="source">the pairing stage's report</span>"#),
+        offered.contains(r#"<span class="source">the report</span>"#),
         "{offered}"
     );
 
-    sent(
-        &config,
-        Stage::Drives,
-        &refused.replace("}", r#","stage":"drives"}"#),
-    )
-    .await;
+    sent(&config, Stage::Pairing, refused).await;
     let shown = page_of("directories").await;
     crate::surfaces::assert_inputs_drawn(&shown);
     let report = pane(&shown, drives);
@@ -2914,14 +2905,14 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
     let confirm = page_of("confirm").await;
     crate::surfaces::assert_inputs_drawn(&confirm);
     assert!(
-        confirm.contains("the drives stage's report, the latest, is refused for cause 4"),
+        confirm.contains("the report is refused for cause 4"),
         "{confirm}"
     );
 
     sent(
         &config,
-        Stage::Drives,
-        &crate::setup_place_tests::drives_report(),
+        Stage::Pairing,
+        &crate::setup_place_tests::laid_pairing_report(),
     )
     .await;
     let shown = page_of("directories").await;
@@ -2949,10 +2940,9 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
 }
 
 /// **The reports land with the row in one transaction** (Spec 8.2, section
-/// 9): a pairing whose first frame carries a `pairing` and a `drives` stage
-/// report leaves both on the setup byte for byte once the box hears
-/// `paired`, and the Pair page shows the pairing stage's report, not the
-/// pane that waits for one.
+/// 9): a pairing whose first frame carries its `pairing` stage report
+/// leaves it on the setup byte for byte once the box hears `paired`, and
+/// the Pair page shows the report, not the pane that waits for one.
 ///
 /// Perturbation: drop the reports' insert from `pairing_write_on`, and the
 /// setup holds none.
@@ -2964,18 +2954,11 @@ async fn the_report_lands_with_the_row_in_one_transaction() {
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     let mut keys = box_keys("box-a");
-    let pairing = "{ \"cards\" : [1,  2] }\n";
-    let drives = "{\"disks\":[{\"model\":\"\\u00e9\"}]}";
-    keys.claim.reports = vec![
-        crate::link::frames::PairReport {
-            stage: Stage::Pairing,
-            report: pairing.into(),
-        },
-        crate::link::frames::PairReport {
-            stage: Stage::Drives,
-            report: drives.into(),
-        },
-    ];
+    let pairing = "{ \"format\": \"weaver-survey/2\", \"cards\" : [1,  2], \"disks\":[{\"model\":\"\\u00e9\"}] }\n";
+    keys.claim.reports = vec![crate::link::frames::PairReport {
+        stage: Stage::Pairing,
+        report: pairing.into(),
+    }];
     let dialed = dial(&rig, &keys.claim).await;
     let code = dialed.code().to_string();
     let the_box = tokio::spawn(the_box(dialed, Box::Whole));
@@ -2990,13 +2973,7 @@ async fn the_report_lands_with_the_row_in_one_transaction() {
         .into_iter()
         .map(|(stage, report, _)| (stage, report))
         .collect();
-    assert_eq!(
-        kept,
-        [
-            ("pairing".to_owned(), pairing.to_owned()),
-            ("drives".to_owned(), drives.to_owned())
-        ]
-    );
+    assert_eq!(kept, [("pairing".to_owned(), pairing.to_owned())]);
     let page = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(
         !page.contains("No report has arrived at the pairing stage"),

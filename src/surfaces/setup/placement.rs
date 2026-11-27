@@ -39,7 +39,7 @@ use axum::routing::get;
 use super::{
     Frame, MALFORMED_SETUP, Page, Seams, declaration_read, declaration_state, frame, landed,
 };
-use crate::box_report::{Report, Reports, stage_name};
+use crate::box_report::{Report, Reports};
 use crate::gguf::Header;
 use crate::store::Store;
 use crate::store::admin::Refusal;
@@ -47,7 +47,6 @@ use crate::store::audit::Target;
 use crate::store::identity::is_setup_id;
 use crate::store::setup::{MAX_TOKENS_PER_TURN, Placement, SetupModel};
 use crate::surfaces::admin::{fault, first_of, refused, settled, step_four, writer};
-use crate::survey::Stage;
 
 /// The save's action, as its audit records name it.
 const ACTION: &str = "setup placement";
@@ -128,10 +127,9 @@ struct CardView {
     checked: bool,
 }
 
-/// **The devices pane's status** (Spec 6.2): read from the latest report
-/// of either stage, which brings the cards, else refused, misfiled or
-/// waiting, the latest named where it does not read; and each kept device
-/// the cards lack.
+/// **The devices pane's status** (Spec 6.2): read from the report, which
+/// brings the cards, else refused or waiting, named where it does not read;
+/// and each kept device the cards lack.
 struct DevicesView {
     class: &'static str,
     word: &'static str,
@@ -140,38 +138,17 @@ struct DevicesView {
     lacking: Vec<i32>,
 }
 
-/// A stage's report that does not read, as the devices pane names it.
-fn unread(stage: Stage, report: &Report) -> Option<String> {
-    let stage = stage_name(stage);
-    match report {
-        Report::Refused { refused, .. } => Some(format!(
-            "The {stage} stage's report is refused for cause {}: {}.",
-            refused.cause.number(),
-            refused.cause.words()
-        )),
-        Report::Misfiled { names, .. } => Some(format!(
-            "The report kept as the {stage} stage's names its stage {}.",
-            stage_name(*names)
-        )),
-        Report::Waiting | Report::Read { .. } => None,
-    }
-}
-
 impl DevicesView {
-    /// The devices pane's status from `reports`, the cards from the stage
-    /// `from`, and the devices `kept`. The cards are the latest report's of
-    /// either stage, as the box's members are, so where the latest does not
-    /// read no card is offered and the pane names why, even where an earlier
-    /// report reads (the Planner's ruling of 2026-11-24 on the review).
-    fn of(reports: &Reports, from: Option<(Stage, &[i32])>, kept: &[i32]) -> DevicesView {
-        match from {
-            Some((stage, ordinals)) => DevicesView {
+    /// The devices pane's status from `reports`, the cards' ordinals where
+    /// the report reads, and the devices `kept`. The cards are the report's,
+    /// as the box's members are, so where it does not read no card is
+    /// offered and the pane names why.
+    fn of(reports: &Reports, ordinals: Option<&[i32]>, kept: &[i32]) -> DevicesView {
+        match ordinals {
+            Some(ordinals) => DevicesView {
                 class: "ok",
                 word: "read",
-                source: match stage {
-                    Stage::Drives => "the drives stage's report",
-                    Stage::Pairing => "the pairing stage's report",
-                },
+                source: "the report",
                 notes: Vec::new(),
                 lacking: kept
                     .iter()
@@ -180,11 +157,17 @@ impl DevicesView {
                     .collect(),
             },
             None => {
-                let (stage, latest) = reports.latest();
-                let (class, word) = match latest {
-                    Report::Refused { .. } => ("fail", "refused"),
-                    Report::Misfiled { .. } => ("fail", "misfiled"),
-                    Report::Waiting | Report::Read { .. } => ("hold", "waiting"),
+                let (class, word, unread) = match &reports.report {
+                    Report::Refused { refused, .. } => (
+                        "fail",
+                        "refused",
+                        Some(format!(
+                            "The report is refused for cause {}: {}, so no card is offered.",
+                            refused.cause.number(),
+                            refused.cause.words()
+                        )),
+                    ),
+                    Report::Waiting | Report::Read { .. } => ("hold", "waiting", None),
                 };
                 let kept_stand = (!kept.is_empty()).then(|| {
                     format!(
@@ -196,12 +179,8 @@ impl DevicesView {
                 DevicesView {
                     class,
                     word,
-                    source: "the box's latest report, of either stage",
-                    notes: unread(stage, latest)
-                        .map(|note| format!("{note} It is the latest, so no card is offered."))
-                        .into_iter()
-                        .chain(kept_stand)
-                        .collect(),
+                    source: "the box's report",
+                    notes: unread.into_iter().chain(kept_stand).collect(),
                     lacking: Vec::new(),
                 }
             }
@@ -315,18 +294,12 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
         Ok(reports) => reports,
         Err(e) => return fault(e),
     };
-    let from = reports.cards_from();
+    let from = reports.cards();
     let ordinals: Option<Vec<i32>> = from
         .as_ref()
-        .map(|(_, cards)| cards.iter().map(|c| c.ordinal).collect());
-    let devices = DevicesView::of(
-        &reports,
-        from.as_ref()
-            .zip(ordinals.as_deref())
-            .map(|((stage, _), ordinals)| (*stage, ordinals)),
-        &kept,
-    );
-    let cards = from.map(|(_, cards)| {
+        .map(|cards| cards.iter().map(|c| c.ordinal).collect());
+    let devices = DevicesView::of(&reports, ordinals.as_deref(), &kept);
+    let cards = from.map(|cards| {
         cards
             .into_iter()
             .map(|c| CardView {
@@ -540,7 +513,7 @@ async fn save(
         };
         // **Where the page offers no card, the save leaves the kept
         // devices as stored** (the Planner's ruling of 2026-11-24 on the
-        // second review): a latest report that does not read offers none,
+        // second review): a report that does not read offers none,
         // and the form then posts no device. The version check refuses the
         // write where the row changed since `stored` was read.
         let devices = match &survey {

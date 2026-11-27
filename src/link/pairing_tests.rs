@@ -78,10 +78,15 @@ fn claim(r#box: &str) -> Claim {
             "-----BEGIN CERTIFICATE REQUEST-----\nadmin\n-----END CERTIFICATE REQUEST-----\n".into(),
         reports: vec![PairReport {
             stage: Stage::Pairing,
-            report: "{}".into(),
+            report: V2.into(),
         }],
     }
 }
+
+/// A report that reads as `weaver-survey/2` by its `format`, the one
+/// member the first frame reads, and is refused by the reader for its
+/// missing members: it pairs, and the pages show its cause.
+const V2: &str = r#"{"format":"weaver-survey/2"}"#;
 
 /// A TCP connection to the listener from a loopback address of the test's
 /// choosing, so the bounds per peer can be met.
@@ -785,26 +790,33 @@ fn refused(reason: &str) -> Option<String> {
 
 /// **A first frame without a `pairing` stage report is refused
 /// `no_report`** (Spec 8.2, section 9), before the box is listed: one with
-/// no reports, one without the member, and one with a `drives` stage report
-/// alone, each hear the refusal and none waits.
+/// no reports and one without the member each hear the refusal and none
+/// waits. **A report at version 1's stage `drives`**, alone or beside a
+/// `pairing` report, makes the frame one this console does not read: it is
+/// refused `frame_refused`, as the earlier hello is.
 ///
 /// Perturbation: drop the check at the first frame, and the box is
 /// answered `waiting` and listed.
 #[tokio::test]
 async fn a_first_frame_without_a_report_is_refused_no_report() {
     let Some(rig) = rig().await else { return };
-    let drives_alone = vec![PairReport {
-        stage: Stage::Drives,
-        report: "{}".into(),
-    }];
     for frame in [
         hello_with(Vec::new()),
         r#"{"svc":"hello","box":"box-a","admin_request":"admin"}"#.to_owned(),
-        hello_with(drives_alone),
     ] {
         assert_eq!(
             first_line_for(&rig, &frame).await,
             refused("no_report"),
+            "{frame}"
+        );
+    }
+    for frame in [
+        r#"{"svc":"hello","box":"box-a","admin_request":"admin","reports":[{"stage":"drives","report":"{}"}]}"#,
+        r#"{"svc":"hello","box":"box-a","admin_request":"admin","reports":[{"stage":"pairing","report":"{}"},{"stage":"drives","report":"{}"}]}"#,
+    ] {
+        assert_eq!(
+            first_line_for(&rig, frame).await,
+            refused("frame_refused"),
             "{frame}"
         );
     }
@@ -813,8 +825,8 @@ async fn a_first_frame_without_a_report_is_refused_no_report() {
 
 /// **A report that is not one JSON object within 64 KiB is refused
 /// `report_refused`** (Spec 8.2, section 9), and so is a stage named twice,
-/// before the box is listed; a report of exactly 64 KiB beside a `drives`
-/// stage report is taken, the box waiting.
+/// before the box is listed; a report of exactly 64 KiB is taken, the box
+/// waiting.
 ///
 /// Perturbation: drop the report's bound in `one_report`, and the report
 /// past it is answered `waiting`.
@@ -826,7 +838,7 @@ async fn a_report_that_is_not_one_object_within_64_kib_is_refused() {
         report,
     };
     let padded = |len: usize| {
-        let head = r#"{"pad":""#;
+        let head = r#"{"format":"weaver-survey/2","pad":""#;
         format!("{head}{}\"}}", "x".repeat(len - head.len() - 2))
     };
     for reports in [
@@ -844,15 +856,77 @@ async fn a_report_that_is_not_one_object_within_64_kib_is_refused() {
         );
     }
     assert!(rig.listener.waiting().is_empty(), "no box is listed");
-    let taken = hello_with(vec![
-        pairing(padded(REPORT_BOUND)),
-        PairReport {
-            stage: Stage::Drives,
-            report: "{}".into(),
-        },
-    ]);
+    let taken = hello_with(vec![pairing(padded(REPORT_BOUND))]);
     let answer = first_line_for(&rig, &taken).await.expect("an answer");
     assert!(answer.contains(r#""svc":"waiting""#), "{answer}");
+}
+
+/// **A report whose `format` does not read as `weaver-survey/2` is
+/// refused `format_refused`** (Spec 8.2, the Planner's rulings of
+/// 2026-11-25), before the box is listed, whatever the cause: another
+/// version, version 1's worked example among them; `format` missing, null,
+/// a number or given twice; and a report the frame's check takes as one
+/// JSON object but from which the reader reads no member, whitespace past
+/// one newline after it. A report of version 2 refused by the reader for
+/// another cause, here its missing members, is not judged at the frame and
+/// waits. A lone surrogate in the frame's report is no UTF-8 text, so the
+/// frame does not parse and is refused `frame_refused`. A report opening
+/// with a byte-order mark is refused `report_refused` first, since the
+/// frame's own check takes no U+FEFF as white space (the fix round of
+/// 2026-11-26).
+///
+/// Perturbation: drop the format's check at the first frame, and each
+/// report of another version is answered `waiting`.
+#[tokio::test]
+async fn a_report_not_of_version_2_by_its_format_is_refused_format_refused() {
+    let Some(rig) = rig().await else { return };
+    let version_1 = include_str!("../../tests/fixtures/weaver-survey-1-worked-example.json");
+    for report in [
+        version_1,
+        r#"{"format":"weaver-survey/3"}"#,
+        r#"{"format":"weaver-survey/2 "}"#,
+        "{}",
+        r#"{"format":null}"#,
+        r#"{"format":2}"#,
+        r#"{"format":"weaver-survey/2","format":"weaver-survey/2"}"#,
+        "{\"format\":\"weaver-survey/2\"}  \n\n",
+    ] {
+        let frame = hello_with(vec![PairReport {
+            stage: Stage::Pairing,
+            report: report.into(),
+        }]);
+        assert_eq!(
+            first_line_for(&rig, &frame).await,
+            refused("format_refused"),
+            "{}",
+            &report[..report.len().min(80)]
+        );
+    }
+    assert!(rig.listener.waiting().is_empty(), "no box is listed");
+    let marked = hello_with(vec![PairReport {
+        stage: Stage::Pairing,
+        report: "\u{feff}{\"format\":\"weaver-survey/2\"}".into(),
+    }]);
+    assert_eq!(
+        first_line_for(&rig, &marked).await,
+        refused("report_refused")
+    );
+    let surrogate = r#"{"svc":"hello","box":"box-a","admin_request":"admin","reports":[{"stage":"pairing","report":"{\"format\":\"\ud800\"}"}]}"#;
+    assert_eq!(
+        first_line_for(&rig, surrogate).await,
+        refused("frame_refused")
+    );
+    for report in [
+        V2,
+        r#"{"format":"weaver-survey/2","stage":"drives","x":{"format":1,"format":2}}"#,
+    ] {
+        let frame = hello_with(vec![PairReport {
+            stage: Stage::Pairing,
+            report: report.into(),
+        }]);
+        let answer = first_line_for(&rig, &frame).await.expect("an answer");
+        assert!(answer.contains(r#""svc":"waiting""#), "{report}: {answer}");
+    }
 }
 
 /// **The data door never serves the pairing protocol** (Spec 8): with two

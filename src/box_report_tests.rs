@@ -1,15 +1,19 @@
-//! **The source's reading of the kept reports** (Spec 6.2): which report
-//! feeds the cards and which the box's members, the holds Confirm takes
-//! from the latest report of either stage, and the state drive's figure. No store:
-//! `Reports::of` reads rows as the store hands them over.
+//! **The source's reading of the kept report** (Spec 6.2): the one report
+//! of version 2 feeds the cards and the box's members, the holds Confirm
+//! takes from it, a row kept under version 1's stage `drives` named and
+//! feeding nothing, and the state drive's figure. No store: `Reports::of`
+//! reads rows as the store hands them over.
 
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::{Value, json};
 
 use crate::box_report::{Card, Report, Reports, STATE_DRIVE_FLOOR};
-use crate::survey::{Cause, MODELS_MOUNT, STATE_MOUNT, Stage};
+use crate::survey::Cause;
 
-const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-1-worked-example.json");
+const EXAMPLE: &str = include_str!("../tests/fixtures/weaver-survey-2-worked-example.json");
+
+/// Version 1's worked example, as a row kept under the stage `drives`.
+const VERSION_1: &str = include_str!("../tests/fixtures/weaver-survey-1-worked-example.json");
 
 /// What a 10 GiB disk formatted ext4 with its defaults reports as its
 /// filesystem's size, measured on 2026-11-17: 2,554,693 blocks of 4 KiB,
@@ -26,28 +30,31 @@ fn edited(edit: impl FnOnce(&mut Value)) -> String {
     serde_json::to_string(&value).unwrap()
 }
 
-/// The worked example at the pairing stage: both drives not mounted, and one
-/// card, so a test can tell its cards from the drives report's two.
-fn pairing() -> String {
+/// The worked example with both drives not mounted, at the two places the
+/// image proof gives, and one card.
+fn unlaid() -> String {
     edited(|v| {
-        v["stage"] = json!("pairing");
         v["cards"] = json!([v["cards"][0].clone()]);
         v["drives"] = json!([
-            {"role": "state", "mount_point": STATE_MOUNT, "mounted": false},
-            {"role": "models", "mount_point": MODELS_MOUNT, "mounted": false},
+            {"role": "state", "mount_point": "/mnt/weaver/state", "mounted": false},
+            {"role": "models", "mount_point": "/mnt/weaver/models", "mounted": false},
         ]);
     })
 }
 
-/// The setup's kept reports as the store hands them over: stage, the
-/// verbatim report, its arrival.
+/// The setup's kept rows as the store hands them over: the report under
+/// `pairing`, and a row under `drives` where one was kept before version 2.
 fn kept(pairing: Option<String>, drives: Option<String>) -> Reports {
     let mut rows = Vec::new();
     if let Some(report) = pairing {
         rows.push(("pairing".to_owned(), report, arrived()));
     }
     if let Some(report) = drives {
-        rows.push(("drives".to_owned(), report, arrived()));
+        rows.push((
+            "drives".to_owned(),
+            report,
+            arrived() + chrono::Duration::minutes(5),
+        ));
     }
     Reports::of(&rows)
 }
@@ -56,41 +63,54 @@ fn ordinals(cards: &[Card]) -> Vec<i32> {
     cards.iter().map(|c| c.ordinal).collect()
 }
 
-/// **The cards are the latest report's of either stage**, as the box's
-/// members are, so one tuple stands on one report (the Planner's ruling of
-/// 2026-11-24 on the review): the drives report's where it arrived last or
-/// on a tie, the pairing report's where that arrived after it, and none
-/// where the latest does not read, an earlier report that reads masking
-/// nothing.
+/// **The cards are the report's**, as the box's members are, so one tuple
+/// stands on one report; none where it does not read. A row kept under
+/// `drives`, though it arrived later and reads under version 1, feeds no
+/// card.
 #[test]
-fn the_cards_are_the_latest_reports_of_either_stage() {
-    let (early, late) = (arrived(), arrived() + chrono::Duration::minutes(5));
-    let both = kept(Some(pairing()), Some(EXAMPLE.to_owned()));
+fn the_cards_are_the_reports_and_a_drives_row_feeds_none() {
+    let both = kept(Some(EXAMPLE.to_owned()), Some(VERSION_1.to_owned()));
     let cards = both.cards().unwrap();
     assert_eq!(ordinals(&cards), vec![0, 1]);
     assert_eq!(cards[1].model, "NVIDIA RTX A5000");
-    let pairing_after = kept_at(&[
-        ("drives", EXAMPLE.to_owned(), early),
-        ("pairing", pairing(), late),
-    ]);
-    assert_eq!(ordinals(&pairing_after.cards().unwrap()), vec![0]);
-    let pairing_alone = kept(Some(pairing()), None);
-    assert_eq!(ordinals(&pairing_alone.cards().unwrap()), vec![0]);
-    let refused_drives_after = kept_at(&[
-        ("pairing", pairing(), early),
-        ("drives", "{}".to_owned(), late),
-    ]);
-    assert_eq!(refused_drives_after.cards(), None);
+    assert_eq!(
+        ordinals(&kept(Some(unlaid()), None).cards().unwrap()),
+        vec![0]
+    );
+    let drives_alone = kept(None, Some(EXAMPLE.to_owned()));
+    assert_eq!(drives_alone.cards(), None, "a drives row is never read");
+    assert_eq!(
+        drives_alone.cards_or_why().unwrap_err(),
+        "no report has arrived, so no card is read"
+    );
     assert_eq!(kept(None, None).cards(), None);
-    assert_eq!(kept(Some("not json".to_owned()), None).cards(), None);
+    let refused = kept(Some("not json".to_owned()), None);
+    assert_eq!(refused.cards(), None);
+    assert!(
+        refused
+            .cards_or_why()
+            .unwrap_err()
+            .starts_with("the report is refused for cause 1:"),
+    );
+}
+
+/// **A row kept under `drives` is named by its arrival alone** (the
+/// format's section 7: version 2 writes no such stage).
+#[test]
+fn a_drives_row_is_named_by_its_arrival_and_read_by_nothing() {
+    let reports = kept(Some(EXAMPLE.to_owned()), Some("{}".to_owned()));
+    assert_eq!(
+        reports.drives_kept,
+        Some(arrived() + chrono::Duration::minutes(5))
+    );
+    assert!(matches!(reports.report, Report::Read { .. }));
+    assert_eq!(kept(Some(EXAMPLE.to_owned()), None).drives_kept, None);
 }
 
 #[test]
-fn the_box_members_are_the_drives_reports_typed_as_ruled() {
-    let members = kept(Some(pairing()), Some(EXAMPLE.to_owned()))
-        .members()
-        .unwrap();
-    assert_eq!(members.report.stage, "drives");
+fn the_box_members_are_the_reports_typed_as_ruled() {
+    let members = kept(Some(EXAMPLE.to_owned()), None).members().unwrap();
+    assert_eq!(members.report.stage, "pairing");
     assert_eq!(
         members.report.taken.to_rfc3339(),
         "2026-11-17T09:00:00+00:00"
@@ -98,7 +118,7 @@ fn the_box_members_are_the_drives_reports_typed_as_ruled() {
     assert_eq!(members.image.version, "2.0");
     assert_eq!(
         members.image.manifest_sha256,
-        "5b1f0c9e7a2d4486b3e0f19c2d7a65e8c41f03b9d2a7e6158c0b94f3a1d2e7c6"
+        "03fcfb2e3fffc40f40d87b49d7f086d1c45c0c394a6794fbfdb1ce855502c1c8"
     );
     assert_eq!(members.driver_version, "620.70.06");
     assert_eq!(members.cuda_runtime_version, "13.4.92");
@@ -142,7 +162,13 @@ fn the_box_members_are_the_drives_reports_typed_as_ruled() {
         ]
     );
     let stored = serde_json::to_value(&members).unwrap();
-    for moment in ["free_bytes", "loaded", "mount_point"] {
+    for moment in [
+        "free_bytes",
+        "loaded",
+        "mount_point",
+        "network",
+        "prefix_length",
+    ] {
         assert!(
             !stored.to_string().contains(moment),
             "the tuple takes no {moment}: {stored}"
@@ -150,89 +176,30 @@ fn the_box_members_are_the_drives_reports_typed_as_ruled() {
     }
 }
 
-/// The setup's kept reports, each with its own arrival.
-fn kept_at(rows: &[(&str, String, chrono::DateTime<Utc>)]) -> Reports {
-    let rows: Vec<_> = rows
-        .iter()
-        .map(|(stage, report, at)| ((*stage).to_owned(), report.clone(), *at))
-        .collect();
-    Reports::of(&rows)
-}
-
-/// The pairing stage's report of a box whose disks were laid before
-/// pairing (the operator's ruling of 2026-11-23): both drives mounted.
-fn laid_pairing() -> String {
-    edited(|v| v["stage"] = json!("pairing"))
-}
-
-/// **Confirm reads the latest report of either stage, and holds naming
-/// it** (the Planner's ruling of 2026-11-24 on the plan): a pairing-stage
-/// report alone gives the box's members, a drives-stage report arriving
-/// later is read in its place, a pairing-stage report arriving after a
-/// drives-stage one is read in its, and a tie goes to the drives stage.
-/// Where no report has arrived, or the latest is refused or misfiled,
-/// Confirm holds naming it, a refused latest never masked by an earlier
-/// report that reads.
+/// **Confirm reads the report, and holds naming why** where none has
+/// arrived, the report is refused, or a drive is not mounted. A row kept
+/// under `drives` neither stands in for a missing report nor masks a
+/// refused one.
 #[test]
-fn confirm_reads_the_latest_report_of_either_stage_and_holds_naming_it() {
-    let (early, late) = (arrived(), arrived() + chrono::Duration::minutes(5));
-    let stage = |reports: Reports| reports.members().unwrap().report.stage;
-    assert_eq!(
-        stage(kept_at(&[("pairing", laid_pairing(), early)])),
-        "pairing"
-    );
-    assert_eq!(
-        stage(kept_at(&[
-            ("pairing", laid_pairing(), early),
-            ("drives", EXAMPLE.to_owned(), late),
-        ])),
-        "drives"
-    );
-    assert_eq!(
-        stage(kept_at(&[
-            ("drives", EXAMPLE.to_owned(), early),
-            ("pairing", laid_pairing(), late),
-        ])),
-        "pairing"
-    );
-    assert_eq!(
-        stage(kept_at(&[
-            ("pairing", laid_pairing(), early),
-            ("drives", EXAMPLE.to_owned(), early),
-        ])),
-        "drives"
-    );
-    let waiting = kept(None, None).members().unwrap_err();
-    assert_eq!(waiting, "no report of either stage has arrived");
-    // A pairing-stage report with its drives not mounted holds, naming them.
-    let unlaid = kept(Some(pairing()), None).members().unwrap_err();
-    assert!(unlaid.contains("is not mounted"), "{unlaid}");
-    let refused = kept_at(&[
-        ("pairing", laid_pairing(), early),
-        ("drives", "{}".to_owned(), late),
-    ])
-    .members()
-    .unwrap_err();
+fn confirm_reads_the_report_and_holds_naming_why() {
+    let members = kept(Some(EXAMPLE.to_owned()), None).members().unwrap();
+    assert_eq!(members.report.stage, "pairing");
+    let waiting = kept(None, Some(EXAMPLE.to_owned())).members().unwrap_err();
+    assert_eq!(waiting, "no report has arrived");
+    let unlaid = kept(Some(unlaid()), None).members().unwrap_err();
     assert!(
-        refused.contains("the drives stage's report, the latest, is refused for cause 4"),
+        unlaid.contains("the state drive at /mnt/weaver/state is not mounted"),
+        "{unlaid}"
+    );
+    let refused = kept(Some("{}".to_owned()), Some(VERSION_1.to_owned()))
+        .members()
+        .unwrap_err();
+    assert!(
+        refused.starts_with("the report is refused for cause 4"),
         "{refused}"
     );
-    let misfiled = kept(None, Some(pairing())).members().unwrap_err();
-    assert!(
-        misfiled
-            .contains("the report kept as the drives stage's, the latest, names its stage pairing"),
-        "{misfiled}"
-    );
-    let reports = kept(None, Some(pairing()));
     assert!(matches!(
-        reports.drives,
-        Report::Misfiled {
-            names: Stage::Pairing,
-            ..
-        }
-    ));
-    assert!(matches!(
-        kept(None, Some("{}".to_owned())).drives,
+        kept(Some(VERSION_1.to_owned()), None).report,
         Report::Refused { ref refused, .. } if refused.cause == Cause::Format
     ));
 }
@@ -240,9 +207,10 @@ fn confirm_reads_the_latest_report_of_either_stage_and_holds_naming_it() {
 #[test]
 fn confirm_holds_for_a_drive_not_mounted_naming_it() {
     let models_unmounted = edited(|v| {
-        v["drives"][1] = json!({"role": "models", "mount_point": MODELS_MOUNT, "mounted": false});
+        v["drives"][1] =
+            json!({"role": "models", "mount_point": "/srv/weaver-models", "mounted": false});
     });
-    let held = kept(None, Some(models_unmounted)).members().unwrap_err();
+    let held = kept(Some(models_unmounted), None).members().unwrap_err();
     assert!(held.contains("the models drive"), "{held}");
     assert!(held.contains("not mounted"), "{held}");
     assert!(!held.contains("state"), "{held}");
@@ -253,7 +221,7 @@ fn the_state_drive_holds_confirm_under_9_gib_of_filesystem_and_not_at_it() {
     assert_eq!(STATE_DRIVE_FLOOR, 9_663_676_416);
     let state_of = |bytes: u64| {
         let report = edited(|v| v["drives"][0]["bytes"] = json!(bytes));
-        kept(None, Some(report)).members()
+        kept(Some(report), None).members()
     };
     let held = state_of(STATE_DRIVE_FLOOR - 1).unwrap_err();
     assert!(held.contains("the state drive"), "{held}");
@@ -265,7 +233,7 @@ fn the_state_drive_holds_confirm_under_9_gib_of_filesystem_and_not_at_it() {
     );
     let small_models = edited(|v| v["drives"][1]["bytes"] = json!(STATE_DRIVE_FLOOR - 1));
     assert!(
-        kept(None, Some(small_models)).members().is_ok(),
+        kept(Some(small_models), None).members().is_ok(),
         "the figure is the state drive's"
     );
 }

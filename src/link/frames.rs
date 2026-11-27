@@ -356,19 +356,18 @@ pub enum SetupAsk {
 }
 
 /// **A setup report's stage** (Spec 8.3), the command's argument, so the
-/// console reads nothing of the image's format to tell them apart.
+/// console reads nothing of the image's format to know it. `weaver-survey/2`
+/// has one, `pairing`; a frame naming version 1's `drives` does not parse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
     Pairing,
-    Drives,
 }
 
 impl Stage {
     pub fn as_str(&self) -> &'static str {
         match self {
             Stage::Pairing => "pairing",
-            Stage::Drives => "drives",
         }
     }
 }
@@ -603,13 +602,13 @@ pub fn one_report(report: &str) -> bool {
 
 /// **The first frame's reports refused, or not** (Spec 8.2): `no_report`
 /// without a `pairing` stage report, `report_refused` where one is not one
-/// JSON object within its bound or a stage is named twice.
+/// JSON object within its bound or the stage is named twice.
 pub fn reports_refused(reports: &[PairReport]) -> Option<&'static str> {
     if reports.iter().any(|r| !one_report(&r.report)) {
         return Some(pair_reason::REPORT_REFUSED);
     }
     let named = |stage: Stage| reports.iter().filter(|r| r.stage == stage).count();
-    if named(Stage::Pairing) > 1 || named(Stage::Drives) > 1 {
+    if named(Stage::Pairing) > 1 {
         return Some(pair_reason::REPORT_REFUSED);
     }
     if named(Stage::Pairing) == 0 {
@@ -632,9 +631,11 @@ pub enum PairFromBox {
     Hello {
         r#box: String,
         admin_request: String,
-        /// **The survey's reports**, the receipt (the operator's ruling of
-        /// 2026-11-25): the `pairing` stage's, and at most one `drives`
-        /// stage's. An absent member reads as none, refused `no_report`.
+        /// **The survey's report**, the receipt (the operator's ruling of
+        /// 2026-11-25): one, at the stage `pairing`, the one stage of
+        /// `weaver-survey/2`. An absent member reads as none, refused
+        /// `no_report`; a report at version 1's stage `drives` does not
+        /// parse, so the frame is refused `frame_refused`.
         #[serde(default)]
         reports: Vec<PairReport>,
     },
@@ -703,6 +704,11 @@ pub mod pair_reason {
     /// A report is not one JSON object within its bound, or a stage is
     /// named twice.
     pub const REPORT_REFUSED: &str = "report_refused";
+    /// The `pairing` report's `format` does not read as `weaver-survey/2`:
+    /// another version, none, one of another type, or a report from which
+    /// no member can be read (Spec 8.2, the Planner's rulings of
+    /// 2026-11-25).
+    pub const FORMAT_REFUSED: &str = "format_refused";
 }
 
 #[cfg(test)]

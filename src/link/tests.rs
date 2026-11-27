@@ -205,6 +205,13 @@ impl Fake {
         self.writer.flush().await.unwrap();
     }
 
+    /// One line as given, flushed: a frame the vocabulary cannot build.
+    async fn send_line(&mut self, line: &str) {
+        self.writer.write_all(line.as_bytes()).await.unwrap();
+        self.writer.write_all(b"\n").await.unwrap();
+        self.writer.flush().await.unwrap();
+    }
+
     /// A send that may meet a connection the server already closed.
     async fn try_send(&mut self, frame: FromClient) {
         let mut line = serde_json::to_string(&frame).unwrap();
@@ -3731,4 +3738,43 @@ async fn an_admission_on_a_plane_set_to_none_is_refused_not_live() {
         .expect("an absent fingerprint is no store failure");
     assert_eq!(admitted, Err(Refusal::NotLive));
     assert!(!installed.get());
+}
+
+/// **A `setup report` frame naming version 1's stage `drives` is refused
+/// malformed at the listener** (Spec 8.3, the fix round of 2026-11-26):
+/// `weaver-survey/2` has one stage, so the frame does not parse, and the
+/// connection hears `malformed` and closes. The same frame naming
+/// `pairing` parses and is answered for what it is, here a row no pairing
+/// linked, `no_setup`.
+///
+/// Perturbation: give `Stage` a second variant `Drives`, and the frame
+/// naming it is answered `no_setup`.
+#[tokio::test]
+async fn a_setup_report_naming_the_stage_drives_is_refused_malformed() {
+    use super::frames::{SetupAsk, Stage};
+    let Some(lab) = Lab::open().await else { return };
+    let karl = lab.register("karl").await;
+    let pairing = serde_json::to_string(&FromClient::Setup {
+        agent: karl.name.clone(),
+        plane: Plane::Admin,
+        ask: SetupAsk::Report {
+            stage: Stage::Pairing,
+            report: "{}".into(),
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        pairing.matches(r#""stage":"pairing""#).count(),
+        1,
+        "{pairing}"
+    );
+    let drives = pairing.replace(r#""stage":"pairing""#, r#""stage":"drives""#);
+
+    let mut fake = lab.connect(&karl.admin).await;
+    fake.send_line(&drives).await;
+    fake.expect_refusal(Refusal::Malformed).await;
+
+    let mut fake = lab.connect(&karl.admin).await;
+    fake.send_line(&pairing).await;
+    fake.expect_refusal(Refusal::NoSetup).await;
 }

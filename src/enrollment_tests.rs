@@ -1110,8 +1110,9 @@ async fn on_unknown_the_pairing_page_shows_what_the_write_made() {
 /// and offers no replacement; a pairing claiming that row's box is refused
 /// `box_and_name_live` and writes nothing; a pairing from another box pairs
 /// as a new row, the live row untouched. The schema refuses a move of a
-/// row's box, an `agent_box` row and a setup paired as `replace box`, while
-/// rows written so before the ruling stay readable.
+/// row's box, an `agent_box` row and a setup inserted or updated as
+/// `replace box`, while rows written so before the ruling stay readable and
+/// an update leaving their `paired_as` as it was passes.
 ///
 /// Perturbations: offer the replacement's fieldset again, and the page
 /// test finds it; drop each refusal of migration `0035`, and its write
@@ -1196,6 +1197,21 @@ async fn a_rows_box_never_moves_and_no_new_replace_box_is_written() {
         replaced.is_err_and(|e| e.to_string().contains("every pairing writes a new row")),
         "a setup paired as replace box"
     );
+    // The insert branch: a new setup written as `replace box`, every other
+    // column the setup's own, so the trigger alone stands between it and
+    // the table.
+    let inserted = sqlx::query(
+        "INSERT INTO agent_setup (setup_id, name, begun_by, agent_id, paired_as, paired_at) \
+         SELECT 'st-00000000000000aa', name, begun_by, agent_id, 'replace box', paired_at \
+         FROM agent_setup WHERE setup_id = $1",
+    )
+    .bind(&setup)
+    .execute(&s.pool)
+    .await;
+    assert!(
+        matches!(&inserted, Err(e) if e.to_string().contains("every pairing writes a new row")),
+        "a setup inserted as replace box: {inserted:?}"
+    );
 
     // Rows written so before the ruling: the refusals set aside for their
     // writing alone, as a store migrated from before 0035 holds them.
@@ -1235,11 +1251,15 @@ async fn a_rows_box_never_moves_and_no_new_replace_box_is_written() {
         .await
         .unwrap();
     assert_eq!(held, ["box-older"], "the history reads as written");
-    sqlx::query("UPDATE agent_setup SET version = version + 1 WHERE setup_id = $1")
-        .bind(&setup)
-        .execute(&s.pool)
-        .await
-        .expect("an update leaving paired_as as it was passes");
+    // An update naming `paired_as` and leaving it as it was fires the
+    // trigger and passes.
+    sqlx::query(
+        "UPDATE agent_setup SET paired_as = paired_as, version = version + 1 WHERE setup_id = $1",
+    )
+    .bind(&setup)
+    .execute(&s.pool)
+    .await
+    .expect("an update leaving paired_as as it was passes");
 }
 
 // ---------------------------------------------------------------------------

@@ -63,7 +63,8 @@ pub struct Entry {
     pub agent: AgentId,
     pub plane: &'static str,
     pub source: String,
-    /// For a line of `admin.log`, whether admin-con found it its own.
+    /// For a line of `admin.log`, whether it came through WeaverWeb, the
+    /// service's judgment admin-con carries.
     pub own: Option<bool>,
     pub entry: serde_json::Value,
     pub raise: Option<Raise>,

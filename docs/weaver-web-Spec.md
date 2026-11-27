@@ -2845,19 +2845,37 @@ the connector's run, drawn at its start, and a sequence, and acknowledged by
 `entry_ack`. **Every entry is one line of the operations log**; **an alert is
 raised only for an entry that did not come through WeaverWeb**:
 
-- **admin-con reads the box's `admin.log`**, the box fact `admin_log` of
-  section 8, from its start (no history: the file as it stands when
-  admin-con starts, its baseline taken before the first look and, where it
-  falls inside a line admin was writing, skipping through that line's end;
-  a file absent
-  or unreadable then is read from its start once it opens; a size below what
-  was read, a replacement, or the digest of the last 4 KiB read no longer
-  matching, a copy-truncate regrown between two looks among them, is a
-  discontinuity read from its start, never resumed mid-line), each line, a
-  blank one too, passed along as admin
-  wrote it beside one field admin-con judges: **`own`, true where the line's
-  caller uid is admin-con's own**, the `uid` admin writes for an invocation
-  (the uid sudo reported) or the `peer_uid` the relay writes for a peer. A
+- **admin-con reads the box's `admin.log` through the weaver-admin
+  service**, on one `log` connection on the service's socket (section 7.2,
+  `weaver-admin-operator-contract` section 8.6 at WeaverAgent `265a332d`),
+  and reads no file. Each message is one entry: a line passed along as
+  admin wrote it, a line that is not one JSON object as text, `unparsed`, a
+  line past the service's bound as an `oversized` marker, and the service's
+  truncation or replacement of the file as a discontinuity. **Every gap is
+  marked**: any close of the connection is a discontinuity, and so is an
+  opening admitted after a refusal or a failed opening, since lines
+  appended meanwhile were not read. A reopening backs off on steps from 1
+  to 30 seconds, waiting between half of each step and the whole, and only
+  a connection that proved itself, one that carried a message or stood for
+  30 seconds, starts the steps again, so a service that admits and closes
+  at once is reopened on the growing wait. `log_behind`, the service's word
+  that admin-con fell behind, is reopened at once, unless no line was read
+  since the last `log_behind`, when it waits on the backoff. **A malformed
+  message closes the connection and is marked**: a line that does not
+  parse or passes the bound raises `service_malformed`, and any other
+  refusal on the standing connection (`ask_malformed` among them) raises
+  `service_<word>`, each with a discontinuity and a reopening on the
+  backoff. A refusal of the opening by `log_unread`, or by a word that says
+  admin-con or its config is at fault, raises one failure entry per change
+  of word and not one at every retry, an admission clearing it; `full` and
+  `opening_late` raise none. **Every refusal of the opening is retried on
+  the backoff**, the three defect words `version_unknown`,
+  `purpose_unknown` and `name_refused` among them, so a service upgraded or
+  a name mended while admin-con runs is taken at the next opening, at the
+  cost of one opening every 30 seconds. Beside each line stands one field **the
+  service judges and admin-con carries: `own`, the message's
+  `through_service`**, true where the line names the service's account as
+  its caller or peer, an act that came through WeaverWeb. A
   line that is not own is an act on the box by another party, the operator
   using admin directly, and its refusal is classified by the doors' own
   allow-lists: **an `unload` stopped at its save point on a leg at rest
@@ -2873,7 +2891,12 @@ raised only for an entry that did not come through WeaverWeb**:
   has no need of, which the operations log keeps whole;
 - **a connector's own failure** raises `failed` from its source, its subject
   the failure's kind: admin-con's `ceiling_not_read`, `trace_relay_refused`,
-  `admin_log_unreadable`, and either connector's `link_outage` (the outage's
+  `service_<word>` for a word of the service that says admin-con or its
+  config is at fault, or for `log_unread`, and `service_word_unknown` for a
+  word outside a kind's shape (lowercase letters and underscores, 64 bytes
+  with its prefix), the word quoted in the message and cut at 48 bytes,
+  since the door refuses a kind outside that shape and closes the link, and
+  either connector's `link_outage` (the outage's
   length, once the link is back) and `entries_dropped`.
 
 **At least once, taken once, bounded.** An entry stays in the connector's
@@ -5401,28 +5424,28 @@ also reads the agent's `admin.log`**, admin's NDJSON record of the
 boundary's activity (`weaver-admin-Spec` section 8: refused and read-only
 verbs, `show`, a `stop` at rest, the relay's connects and refusals, each
 line naming its caller's uid and its outcome as the answer or refusal
-object), from the absolute path its config names as the box fact
-`admin_log`, no default; each line it reads is an entry of section 2.14.
+object), through the weaver-admin service's `log` connection, as the
+paragraph on the log below states; each line it reads is an entry of
+section 2.14.
 
 **admin-con holds its connection with no agent laid**, on the Planner's word of
 2026-11-25 accepting the plan, since an appliance pairs before any agent stands on
-it and its loop is installed over admin-con (section 8.2). **Its box facts,
-`admin_socket` and `admin_log`, stand together**, on the Planner's
-word of the same day: neither is an appliance with no agent laid, both a laid
-agent, each an absolute path as before, and one alone a half-done install,
-refused at load naming what is missing. A config naming a member an older
-admin-con read, `weaver_admin` or `trace_socket`, is refused at load naming
-it, so a config laid before the service's socket never starts silently
-unlaid. One fact, the agent laid or not
+it and its loop is installed over admin-con (section 8.2). **Its one box
+fact is `admin_socket`**, the service's socket, an absolute path: absent,
+no agent is laid; present, an agent is. A config naming a member an older
+admin-con read, `weaver_admin`, `trace_socket` or `admin_log`, is refused
+at load naming it, so a config laid before the service's socket never
+starts silently unlaid. One fact, the agent laid or not
 (`AdminConConfig::laid`), chooses the invoker and the start line. **With no agent
 laid** the door reads closed for that reason and admin-con opens no trace, the
 ceiling is empty and admin-con asks the service nothing, so the server asks no verb, and no
 `admin.log` is read and no entry raised, so an appliance with no agent shows no
-alert for files that do not yet exist. A config the
-pairing's `adopt` completes holds none of the three; the act that lays the agent
-adds them and restarts the service, whose next hello declares the ceiling the
-box's rule then grants. The staging tool of section 8.1 still requires the four
-box facts for an agent it stages, since it stages an agent's connectors.
+alert for a log that does not yet exist. A config the
+pairing's `adopt` completes holds no `admin_socket`; the act that lays the agent
+adds it and restarts the service, whose next hello declares the ceiling the
+box's rule then grants. The staging tool of section 8.1 still requires the two
+box facts for an agent it stages, `gate_socket` and `admin_socket`, since it
+stages an agent's connectors.
 
 **admin-con asks the weaver-admin service for the grants and the verbs,
 and this crate holds no privileged invocation**, on the operator's rulings
@@ -5524,9 +5547,9 @@ to: web-a-verb-asks-the-service-and-reads-its-run-after-a-drop
 operator's rulings of 2026-11-26 the sudo rule moves to the weaver-admin
 service's account, and admin-con asks that service for the grants, a verb,
 the trace and the admin log's lines on the box's local socket. The grants
-and the verbs moved onto it in the stack's third child, and the trace in
-its fourth, as the paragraphs above and below state; the log follows in
-its fifth.
+and the verbs moved onto it in the stack's third child, the trace in its
+fourth and the log in its fifth, as the paragraphs above and below and
+section 2.14 state.
 The client is `src/link/admin_service.rs`. Each connection opens with one
 line naming the contract's version 1, its purpose and the configured agent,
 and the service answers `open` with its `instance`, or one `refused` line
@@ -5550,6 +5573,24 @@ tag: perturbation
 edge: asserts
 from: weaver-web
 to: web-the-service-socket-bounds-every-line
+```
+
+**The admin log comes through the service** (child 5 of
+`act/the-connectors-side-of-the-socket`, 2026-11-27): admin-con's reader,
+`src/link/admin_log.rs`, is a task of its own on the runtime that holds the
+service's `log` connection, never a thread polling a file, so a slow or
+silent service holds neither the trace nor the verbs. What each message
+becomes, how every gap is marked and where each refusal word lands is
+section 2.14's account of the connectors' entries.
+
+```graph
+node: web-the-admin-log-comes-through-the-service
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-the-admin-log-comes-through-the-service
 ```
 
 **The ceiling is what the service's grants answer names, and a verb is
@@ -6968,8 +7009,8 @@ repository, read by the staging tool alone:
   `admin_con_binary`, and `handover`, the directory `register` wrote into
   (its `--out`), given with an agent and only then.
 - **`[[agent]]`, one per agent on the box**: `box` and `name` as registered,
-  the three box facts the connectors' configs require (`gate_socket`,
-  `admin_socket`, `admin_log`), and optionally
+  the two box facts the connectors' configs require (`gate_socket` and
+  `admin_socket`), and optionally
   `stop_grace_secs`, `verb_bound_secs` and `backfill_bytes`, which default
   as admin-con's config does. **`backfill_bytes` is bounded as admin-con
   bounds it**, on this document's election of 2026-11-13: at most 268435456
@@ -8097,9 +8138,9 @@ two connectors report.
 | the agent page's load state and verbs are one fragment, re-fetched every 15 s through the grant scoping | perturbation, in `src/transition_tests.rs`, `the_run_panes_re_read_by_themselves`, against the real listener and a fake admin-con: the page wraps both panes in the fragment's trigger; the fragment is the page's own panes, kept from every cache; a state written between two fetches shows at the second, its warnings with it; a person holding no grant reads 404, a malformed identity 400, an ended session 401; drop the trigger from the page, drop the grant check, or render the fragment from another view, and the case fails |
 | an answer refused at the door leaves its act's outcome unknown, and raises its alert | perturbation in `src/alerts_tests.rs`: leave the refused answer's ask out of the teardown's drain, on the admin plane or on the gate plane, and a `load` answered naming another verb, or a turn answered with both a close and a fault, raises only the lost contact |
 | a plane's loss is ordered before the restoration that follows it | perturbation in `src/alerts_tests.rs`, the teardown held after its row is released: raise the loss after the teardown rather than where the entry comes out, readmit in the gap, and the lost-contact alert ends unrestored while a connection stands |
-| a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con raises one; put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |
+| a line of the box's `admin.log` raises an alert only where it did not come through WeaverWeb | perturbation in `src/entries_tests.rs` and `src/link/admin_con_tests.rs`: drop the own check at the server, and a refusal admin-con's own invocation met raises its alert again from its line; take every line as another party's at admin-con, and an own line sent end to end through the real admin-con and the fake service raises one; judge `own` by the line's uid against admin-con's own again, in `src/link/admin_log_tests.rs`, and the service's judgment is lost (measured 2026-11-27); put the whole line back in the alert's detail, and another party's refusal shows the line's uid and command line to every grant holder |
 | a connector's entry is taken once, though it is sent again, and acknowledged only once durable | perturbation in `src/entries_tests.rs`: drop the run's mark, and an entry resent on a new connection is logged twice; read on past an entry the store did not take, and the next entry moves the mark past it, so its resend is taken for a duplicate and never logged; acknowledge without writing the entry's row, and 1,000 entries acknowledged while the drainer is held are never logged; delete a row whose line failed, and that entry's line is lost; drop the inbox's backoff, and rows that keep failing hold the entry behind them forever; keep the entry as `jsonb`, or leave a NUL in an alert's text, and an entry carrying a NUL is never applied; raise a row's alert in a transaction apart from its record on the row, fail the record, and the retry raises it again; drop the claim, and two drainers on one store write rows' lines twice; leave the drainer out of its listener's tasks, and a stopped listener's drainer applies rows after its stop; end the alerts' worker before the connections at a stop, and a teardown's unknown and its line are lost; skip a blank line of `admin.log`, and it is no entry; drop the connector's resend, and a window whose acknowledgements the server dropped stalls the pump for good; restart the resend's timer at every wake, and a line every quarter of the bound postpones it for as long as the stream lasts; choose due rows by their identity alone, and an entry behind seventy slowly failing rows starves; send an oversized `admin_log` entry in the failure shape, and the door refuses it at every resend |
-| admin-con reads `admin.log` from its start's baseline, a truncation or a regrowth seen | perturbation in `src/entries_tests.rs`: take every first open as the start's baseline, and lines written to a file absent at the start are skipped; take a baseline inside a line with no skip, and that line's rest is sent as a line of its own; drop the digest of the last bytes read, and a copy-truncate regrown between two looks is resumed mid-line |
+| admin-con reads `admin.log` through the service's `log` connection: each message its entry, every gap a discontinuity, `log_behind` reopened at once and a second with no line since on the backoff, only a connection that proved itself resetting the backoff, `log_unread` one entry per change, and a word outside a kind's shape a fixed kind (sections 2.14, 7.2) | perturbation in `src/link/admin_log_tests.rs`, against the fake service: drop the discontinuity at an opening admitted after a refusal, and the gap reads as continuous; raise the failure at every refused opening, and the retries raise one each; keep the word's memory across an admission, and the same word after it raises nothing; reset the backoff at every admission, and a service admitting and closing at once is reopened every half step; reopen at once after every `log_behind`, and the second comes with no wait; and in `src/link/admin_con_tests.rs`, against the real listener, give `service_<word>` for any word, and a word outside the shape closes the link at every reconnection (each measured 2026-11-27) |
 | a connector's backlog of entries is bounded, its drops counted and reported | perturbation in `src/entries_tests.rs`: drop the bound, and a backlog past it holds every entry |
 | the door checks an entry once, its source on the plane's allow-list | perturbation in `src/entries_tests.rs`: give the gate plane the admin plane's sources, and gate-con's entry claiming `admin_log` is taken and classified rather than refused as malformed |
 | a load that reset the agent is a `data_lost` alert, raised once | perturbation in `src/entries_tests.rs`: drop the reset check, and the trace's `load` event carrying `reset` raises nothing |
@@ -8225,8 +8266,8 @@ two connectors report.
 | a connector dials from its `local_address` where one is named (section 8) | perturbation in `src/link/client_tests.rs`, `a_connector_dials_from_its_local_address`: drop the bind, and the server sees the connection from `127.0.0.1` (measured 2026-11-25) |
 | `gate_listen` and `gate_address` parse, default absent, and `gate_address` without `gate_listen` is refused at load; gate-con's config carries the data door's address (section 8) | `src/config.rs`'s tests, `the_data_door_is_optional_and_its_address_needs_it`; perturbation in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: write the management door's address into gate-con's config, and the two-door case fails (measured 2026-11-25) |
 | every line on the weaver-admin service's socket is read within its bound and never past it: the opening's answer at 4096 bytes within 11 seconds, a control line at 256 KiB, a log line at 64 KiB, and the connector's own lines at 4096 bytes before a byte is sent (section 7.2) | tests in `src/link/admin_service_tests.rs` against the fake service of `src/link/fake_service.rs`, among them every opening word at each purpose it answers; perturbation, `an_answer_past_its_bound_is_malformed`: read the opening's answer at `usize::MAX` in place of `OPENING_BOUND`, and the client answers `Open` on a padded answer past 4096 bytes (measured 2026-11-27) |
-| admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with nothing asked of the service, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener on a row whose gate is not enrolled, run as the binary runs it, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: read an absent `admin_log` as a failure, and an alert stands (measured 2026-11-25); choose the service's invoker with no agent laid, and its unanswered grants raise an alert (measured 2026-11-27) |
-| admin-con's box facts stand together, one fact chooses the invoker, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `the_box_facts_stand_together_and_one_fact_chooses_the_invoker`: drop the refusal of some and not all, and the half-laid config loads; drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (each measured 2026-11-25) A config naming the retired `weaver_admin` or `trace_socket` is refused at load naming it, in the same test: drop the refusal, and the old config loads with the member ignored (measured 2026-11-27) |
+| admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with nothing asked of the service, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener on a row whose gate is not enrolled, run as the binary runs it, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: choose the service's invoker with no agent laid, and its unanswered grants raise an alert (measured 2026-11-27) |
+| admin-con's one box fact, `admin_socket`, chooses the invoker, a retired member is refused naming it, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `one_box_fact_chooses_the_invoker_and_retired_members_are_refused`: drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (measured 2026-11-25); drop the refusal of a retired member, `weaver_admin`, `trace_socket` or `admin_log`, and the old config loads with the member ignored (measured 2026-11-27) |
 | an admission on a plane a pairing set to not enrolled is refused `not_live`, never as a store failure (section 8) | perturbation in `src/link/tests.rs`, `an_admission_on_a_plane_set_to_none_is_refused_not_live`: read the fingerprint as a string, and the admission fails decoding (measured 2026-11-25) |
 | a mistyped `local_address` is refused naming the member and never its value (section 8) | perturbation in `src/link/admin_con_tests.rs`, `a_mistyped_local_address_is_refused_naming_the_member`: drop the member from admin-con's list, and the refusal names none; drop the check by name in `client::parse_config`, and the refusal names the file's first member, since serde's flatten drops the member's place (each measured 2026-11-25) |
 

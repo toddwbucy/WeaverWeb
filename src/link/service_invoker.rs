@@ -84,10 +84,61 @@ pub(crate) fn is_defect(word: &str) -> bool {
     DEFECTS.contains(&word)
 }
 
+/// The kind for a word outside the shape the server's door takes for a
+/// kind, the word itself then quoted in the message.
+pub(crate) const WORD_UNKNOWN_KIND: &str = "service_word_unknown";
+
+/// The bound on a kind at the server's door, which takes lowercase ASCII
+/// letters and underscores alone.
+const KIND_BOUND: usize = 64;
+
+/// The bytes of an out-of-shape word a message quotes, before it is cut.
+const WORD_QUOTED: usize = 48;
+
 /// **The entry kind for a word of the service's**, the alert's subject at
-/// the server: one per word, so an operator reads which.
-pub(crate) fn entry_kind(word: &str) -> String {
-    format!("service_{word}")
+/// the server: one per word, so an operator reads which. A word the
+/// server's door would refuse as a kind (empty, past 64 bytes with its
+/// prefix, or holding anything but lowercase letters and underscores) is
+/// `service_word_unknown`: the door refuses a whole entry outside its
+/// shape and closes the link, and the entry would be sent again at every
+/// reconnection, holding the plane refused.
+fn entry_kind(word: &str) -> String {
+    let kind = format!("service_{word}");
+    if in_shape(word) {
+        kind
+    } else {
+        WORD_UNKNOWN_KIND.to_owned()
+    }
+}
+
+fn in_shape(word: &str) -> bool {
+    !word.is_empty()
+        && "service_".len() + word.len() <= KIND_BOUND
+        && word.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+}
+
+/// **A connector failure for a refusal by `word`**: its kind, and its
+/// message with an out-of-shape word quoted and bounded wherever it
+/// stands, and named as outside a kind's shape.
+pub(crate) fn service_failure(word: &str, message: String) -> (String, String) {
+    if in_shape(word) {
+        return (entry_kind(word), message);
+    }
+    let mut end = word.len().min(WORD_QUOTED);
+    while !word.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = if end < word.len() { "..." } else { "" };
+    let quoted = format!("\"{}{cut}\"", word[..end].escape_default());
+    let message = if word.is_empty() {
+        message
+    } else {
+        message.replace(word, &quoted)
+    };
+    (
+        WORD_UNKNOWN_KIND.to_owned(),
+        format!("{message} (the service's word {quoted} is outside the shape of a kind)"),
+    )
 }
 
 /// The service's invoker for one agent.
@@ -172,6 +223,12 @@ impl ServiceInvoker {
         }
     }
 
+    /// A connector failure for a refusal by the service's `word`.
+    fn word_entry(&self, word: &str, message: String) {
+        let (kind, message) = service_failure(word, message);
+        self.entry(&kind, message);
+    }
+
     /// Open a control connection.
     async fn control(&self) -> Result<Opened, admin_service::OpenError> {
         admin_service::open(&self.socket, Purpose::Control, &self.agent, ANSWER_WAIT).await
@@ -212,7 +269,7 @@ impl ServiceInvoker {
                     } else {
                         "a word that cannot answer a verb"
                     };
-                    self.entry(&entry_kind(w), format!("{message} ({why})"));
+                    self.word_entry(w, format!("{message} ({why})"));
                 }
                 fault(VerbFault::NOT_STARTED, message)
             }
@@ -296,7 +353,7 @@ impl ServiceInvoker {
                             "the service refused the baseline's run ask, {}: {}; {verb} was not asked and did not run",
                             refusal.word, refusal.detail
                         );
-                        self.entry(&entry_kind(&refusal.word), message.clone());
+                        self.word_entry(&refusal.word, message.clone());
                         return Ok(Err(not_started(message)));
                     }
                     Ok(Ok(other)) => Err(format!("the baseline's run ask was answered {other:?}")),
@@ -348,8 +405,8 @@ impl ServiceInvoker {
                     // `ask_outstanding`, a refusal after `started`, or a
                     // word no verb's refusal holds: the run may stand, so
                     // its `run` answer says.
-                    self.entry(
-                        &entry_kind(&refusal.word),
+                    self.word_entry(
+                        &refusal.word,
                         format!(
                             "the service refused {verb}'s connection with {} while the verb was outstanding: {}; its run is read after",
                             refusal.word, refusal.detail
@@ -440,7 +497,7 @@ impl ServiceInvoker {
                     let message = format!(
                         "the service refused a run poll after {verb}'s connection dropped, {w}; whether it took effect is unknown until the next show"
                     );
-                    self.entry(&entry_kind(&w), message.clone());
+                    self.word_entry(&w, message.clone());
                     return Err(fault(VerbFault::UNKNOWN, message));
                 }
             };

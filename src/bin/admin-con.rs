@@ -36,8 +36,8 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
     /// Path to admin-con's TOML config: the file `weaver-web register`
-    /// wrote, or `adopt` completed, with `admin_socket` and `admin_log`
-    /// added once an agent is laid (Spec 7.2).
+    /// wrote, or `adopt` completed, with `admin_socket` added once an
+    /// agent is laid (Spec 7.2).
     #[arg(long, required = true)]
     config: Option<PathBuf>,
 }

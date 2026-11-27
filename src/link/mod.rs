@@ -20,6 +20,8 @@
 
 pub mod admin_con;
 pub mod admin_log;
+#[cfg(test)]
+mod admin_log_tests;
 pub mod admin_service;
 pub mod authority;
 pub mod box_commands;

@@ -147,8 +147,8 @@ impl Invoker for NoVerbs {
 // ---------- the config ----------
 
 /// admin-con's config: what `weaver-web register` wrote, plus the box facts
-/// filled at install with no default (the trace relay's socket, the
-/// weaver-admin service's socket and the agent's `admin.log`), the backfill
+/// filled at install with no default (the weaver-admin service's socket,
+/// once an agent is laid), the backfill
 /// bound for the first connection after a server restart, and the verb's
 /// bound and the stop's grace (Spec 7.2, 8).
 #[derive(Debug, Clone, Deserialize)]
@@ -157,17 +157,12 @@ pub struct AdminConConfig {
     pub link: LinkConfig,
     /// **The weaver-admin service's socket, absolute** (Spec 7.2;
     /// `weaver-admin-operator-contract` section 8): where admin-con asks
-    /// the grants and a verb, and opens the trace. **Absent with no agent
-    /// laid**: the ceiling is empty, nothing is asked, and the door reads
-    /// closed for that reason.
+    /// the grants and a verb, and opens the trace and the admin log.
+    /// **Absent with no agent laid**: the ceiling is empty, nothing is
+    /// asked, the door reads closed for that reason, and no admin log is
+    /// read.
     #[serde(default)]
     pub admin_socket: Option<PathBuf>,
-    /// **The agent's `admin.log`, absolute** (Spec 2.14, 8): a box fact
-    /// with no default, read line by line from admin-con's start and sent
-    /// upstream as entries (`link::admin_log`). **Absent with no agent
-    /// laid**: nothing is read and no entry is raised.
-    #[serde(default)]
-    pub admin_log: Option<PathBuf>,
     /// How much of the file's tail is relayed after a server restart, and
     /// how much of what an opening read it holds to replay without reading
     /// again.
@@ -252,6 +247,10 @@ const RETIRED: &[(&str, &str)] = &[
         "trace_socket",
         "trace_socket is retired; admin-con reads the trace through the service at admin_socket",
     ),
+    (
+        "admin_log",
+        "admin_log is retired; admin-con reads the admin log through the service at admin_socket",
+    ),
 ];
 
 /// The members an admin-con config may carry: the only names a parse error
@@ -267,7 +266,6 @@ const MEMBERS: &[&str] = &[
     "key",
     "local_address",
     "admin_socket",
-    "admin_log",
     "backfill_bytes",
     "verb_bound_secs",
     "stop_grace_secs",
@@ -299,50 +297,27 @@ impl AdminConConfig {
                 cfg.backfill_bytes
             );
         }
-        // **The box facts stand together** (Spec 7.2): none is an
-        // appliance with no agent laid, both a laid agent, and one alone a
-        // half-done install, refused naming what is missing.
-        let facts = [
-            ("admin_socket", &cfg.admin_socket),
-            ("admin_log", &cfg.admin_log),
-        ];
-        let missing: Vec<&str> = facts
-            .iter()
-            .filter(|(_, fact)| fact.is_none())
-            .map(|(member, _)| *member)
-            .collect();
-        if !missing.is_empty() && missing.len() < facts.len() {
+        // **One box fact, `admin_socket`** (Spec 7.2): absent, no agent is
+        // laid; present, it is absolute, never resolved against admin-con's
+        // working directory.
+        if let Some(fact) = &cfg.admin_socket
+            && !fact.is_absolute()
+        {
             anyhow::bail!(
-                "{}: the box facts stand together, both for a laid agent or none before one is laid, and {} {} missing",
+                "{}: admin_socket {} is not an absolute path",
                 path.display(),
-                missing.join(" and "),
-                if missing.len() == 1 { "is" } else { "are" }
+                fact.display()
             );
-        }
-        for (member, fact) in [
-            ("admin_socket", &cfg.admin_socket),
-            ("admin_log", &cfg.admin_log),
-        ] {
-            if let Some(fact) = fact
-                && !fact.is_absolute()
-            {
-                anyhow::bail!(
-                    "{}: {member} {} is not an absolute path",
-                    path.display(),
-                    fact.display()
-                );
-            }
         }
         Ok(cfg)
     }
 }
 
-/// **The box facts of a laid agent** (Spec 7.2), both, which the config
-/// holds together or not at all.
+/// **The box fact of a laid agent** (Spec 7.2): the weaver-admin
+/// service's socket.
 #[derive(Debug, Clone, Copy)]
 pub struct Laid<'a> {
     pub admin_socket: &'a Path,
-    pub admin_log: &'a Path,
 }
 
 impl AdminConConfig {
@@ -352,7 +327,6 @@ impl AdminConConfig {
     pub fn laid(&self) -> Option<Laid<'_>> {
         Some(Laid {
             admin_socket: self.admin_socket.as_deref()?,
-            admin_log: self.admin_log.as_deref()?,
         })
     }
 }
@@ -443,7 +417,8 @@ impl Reach {
                 if changed && service_invoker::is_defect(word) {
                     tracing::error!("{why}");
                     if let Some(entries) = &self.entries {
-                        entries.failure(&service_invoker::entry_kind(word), why.clone());
+                        let (kind, why) = service_invoker::service_failure(word, why.clone());
+                        entries.failure(&kind, why);
                     }
                 }
             }
@@ -1505,18 +1480,19 @@ pub async fn run<I: Invoker>(
     let serve_shutdown = shutdown.clone();
     let slot = Arc::new(Slot::new());
     // **The connector's entries** (Spec 2.14): its own failures, and the
-    // box's admin.log read on a thread of its own, sent upstream by the
-    // connection's pump.
+    // box's admin.log read through the service by a task of its own, sent
+    // upstream by the connection's pump.
     let entries = Entries::new("admin-con");
     invoker.attach(&entries);
-    // **No `admin_log`, nothing read** (Spec 7.2): with no agent laid the
-    // file does not exist yet, and its absence is no failure.
+    // **No agent laid, no admin log read** (Spec 7.2): the log does not
+    // exist yet, and its absence is no failure.
     let laid = cfg.laid();
-    let _tail = laid.map(|laid| {
-        admin_log::tail(
-            laid.admin_log.to_owned(),
+    let _log = laid.map(|laid| {
+        admin_log::follow(
+            laid.admin_socket.to_owned(),
+            cfg.link.agent.clone(),
             entries.clone(),
-            admin_log::my_uid(),
+            admin_log::BACKOFF,
             shutdown.clone(),
         )
     });

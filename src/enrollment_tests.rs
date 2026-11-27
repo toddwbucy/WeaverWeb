@@ -1197,12 +1197,12 @@ async fn a_rows_box_never_moves_and_no_new_replace_box_is_written() {
         replaced.is_err_and(|e| e.to_string().contains("every pairing writes a new row")),
         "a setup paired as replace box"
     );
-    // The insert branch: a new setup written as `replace box`, every other
-    // column the setup's own, so the trigger alone stands between it and
-    // the table.
+    // The insert branch: a new setup written as `replace box`, of a name no
+    // open setup holds and every other column the setup's own, so the
+    // trigger alone stands between it and the table.
     let inserted = sqlx::query(
         "INSERT INTO agent_setup (setup_id, name, begun_by, agent_id, paired_as, paired_at) \
-         SELECT 'st-00000000000000aa', name, begun_by, agent_id, 'replace box', paired_at \
+         SELECT 'st-00000000000000aa', 'zed', begun_by, agent_id, 'replace box', paired_at \
          FROM agent_setup WHERE setup_id = $1",
     )
     .bind(&setup)

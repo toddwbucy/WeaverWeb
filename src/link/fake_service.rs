@@ -198,9 +198,9 @@ pub(crate) struct State {
     pub(crate) agent: Option<String>,
     /// The relay's socket a trace connection is spliced to.
     pub(crate) relay: Option<PathBuf>,
-    relay_died: bool,
-    die_next: bool,
-    window_next: bool,
+    pub(crate) relay_died: bool,
+    pub(crate) die_next: bool,
+    pub(crate) window_next: bool,
     log: Option<(u64, mpsc::UnboundedSender<LogOut>)>,
     log_seq: u64,
     /// Every opening the fake answered `open`, by purpose.

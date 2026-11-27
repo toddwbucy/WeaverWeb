@@ -36,13 +36,14 @@ use crate::link::frames::{
     capability,
 };
 use crate::link::relay::{self, Dial, Read};
+use crate::link::service_invoker;
 use crate::traceview::{TraceEvent, parse_line};
 use futures::StreamExt;
 use serde::Deserialize;
 use std::collections::{BTreeSet, VecDeque};
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -154,15 +155,11 @@ impl Invoker for NoVerbs {
 pub struct AdminConConfig {
     #[serde(flatten)]
     pub link: LinkConfig,
-    /// The trace relay's socket, absolute: the door the agent's start step
-    /// opens for admin-con's user alone (Spec 7.2). **Absent with no agent
-    /// laid**: the door reads closed for that reason and no relay is dialed.
-    #[serde(default)]
-    pub trace_socket: Option<PathBuf>,
     /// **The weaver-admin service's socket, absolute** (Spec 7.2;
     /// `weaver-admin-operator-contract` section 8): where admin-con asks
-    /// the grants and a verb. **Absent with no agent laid**: the ceiling is
-    /// empty and nothing is asked.
+    /// the grants and a verb, and opens the trace. **Absent with no agent
+    /// laid**: the ceiling is empty, nothing is asked, and the door reads
+    /// closed for that reason.
     #[serde(default)]
     pub admin_socket: Option<PathBuf>,
     /// **The agent's `admin.log`, absolute** (Spec 2.14, 8): a box fact
@@ -246,10 +243,16 @@ fn default_drain_bound() -> Duration {
 /// **Members an older admin-con read, now refused by name** (Spec 7.2):
 /// a config naming one was laid for the sudo invoker, and starting on it
 /// would leave admin-con silently unlaid.
-const RETIRED: &[(&str, &str)] = &[(
-    "weaver_admin",
-    "weaver_admin is retired; admin-con asks the service at admin_socket",
-)];
+const RETIRED: &[(&str, &str)] = &[
+    (
+        "weaver_admin",
+        "weaver_admin is retired; admin-con asks the service at admin_socket",
+    ),
+    (
+        "trace_socket",
+        "trace_socket is retired; admin-con reads the trace through the service at admin_socket",
+    ),
+];
 
 /// The members an admin-con config may carry: the only names a parse error
 /// may print.
@@ -263,7 +266,6 @@ const MEMBERS: &[&str] = &[
     "certificate",
     "key",
     "local_address",
-    "trace_socket",
     "admin_socket",
     "admin_log",
     "backfill_bytes",
@@ -297,11 +299,10 @@ impl AdminConConfig {
                 cfg.backfill_bytes
             );
         }
-        // **The three box facts stand together** (Spec 7.2): none is an
-        // appliance with no agent laid, all three a laid agent, and some
-        // and not all a half-done install, refused naming what is missing.
+        // **The box facts stand together** (Spec 7.2): none is an
+        // appliance with no agent laid, both a laid agent, and one alone a
+        // half-done install, refused naming what is missing.
         let facts = [
-            ("trace_socket", &cfg.trace_socket),
             ("admin_socket", &cfg.admin_socket),
             ("admin_log", &cfg.admin_log),
         ];
@@ -312,7 +313,7 @@ impl AdminConConfig {
             .collect();
         if !missing.is_empty() && missing.len() < facts.len() {
             anyhow::bail!(
-                "{}: the box facts stand together, all three for a laid agent or none before one is laid, and {} {} missing",
+                "{}: the box facts stand together, both for a laid agent or none before one is laid, and {} {} missing",
                 path.display(),
                 missing.join(" and "),
                 if missing.len() == 1 { "is" } else { "are" }
@@ -320,7 +321,6 @@ impl AdminConConfig {
         }
         for (member, fact) in [
             ("admin_socket", &cfg.admin_socket),
-            ("trace_socket", &cfg.trace_socket),
             ("admin_log", &cfg.admin_log),
         ] {
             if let Some(fact) = fact
@@ -337,11 +337,10 @@ impl AdminConConfig {
     }
 }
 
-/// **The box facts of a laid agent** (Spec 7.2), all three, which the
-/// config holds together or not at all.
+/// **The box facts of a laid agent** (Spec 7.2), both, which the config
+/// holds together or not at all.
 #[derive(Debug, Clone, Copy)]
 pub struct Laid<'a> {
-    pub trace_socket: &'a Path,
     pub admin_socket: &'a Path,
     pub admin_log: &'a Path,
 }
@@ -352,7 +351,6 @@ impl AdminConConfig {
     /// each read (Spec 7.2).
     pub fn laid(&self) -> Option<Laid<'_>> {
         Some(Laid {
-            trace_socket: self.trace_socket.as_deref()?,
             admin_socket: self.admin_socket.as_deref()?,
             admin_log: self.admin_log.as_deref()?,
         })
@@ -401,16 +399,98 @@ pub async fn run_as_configured(
 // ---------- the door ----------
 
 /// **Why the door reads closed with no agent laid** (Spec 7.2).
-pub const NO_AGENT_LAID: &str = "no agent is laid: the config names no trace_socket";
+pub const NO_AGENT_LAID: &str = "no agent is laid: the config names no admin_socket";
 
-/// **The relay's dial, or the door closed with no agent laid** (Spec 7.2):
-/// the empty path stands for a config naming no `trace_socket`, and is
-/// never dialed.
-pub(crate) async fn dial_relay(socket: &Path, from: &Position) -> relay::Dial {
-    if socket.as_os_str().is_empty() {
+/// **A close before the header is confirmed only where this much of the
+/// deadline remains** (Spec 7.2; the brief's decision 5), and the second
+/// opening stops `CONFIRM_MARGIN` short of the deadline, so the caller's
+/// own deadline never cuts it; with less, the close is the refusal.
+const CONFIRM_ROOM: Duration = Duration::from_secs(2);
+const CONFIRM_MARGIN: Duration = Duration::from_secs(1);
+
+/// **Where the trace is opened** (Spec 7.2): the weaver-admin service's
+/// socket, the empty path with no agent laid, and the agent the opening
+/// names. A refusal of the opening by a word that says admin-con or its
+/// config is at fault raises a connector failure entry once per change of
+/// word, not at every retry on the backoff.
+#[derive(Clone)]
+pub(crate) struct Reach {
+    path: PathBuf,
+    agent: String,
+    entries: Option<Entries>,
+    /// The last word the service refused the trace opening with, cleared
+    /// at an admission.
+    last: Arc<Mutex<Option<String>>>,
+}
+
+impl Reach {
+    pub(crate) fn new(path: PathBuf, agent: &str, entries: Option<Entries>) -> Self {
+        Self {
+            path,
+            agent: agent.to_owned(),
+            entries,
+            last: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn dial(&self, from: &Position) -> relay::Dial {
+        let dialed = relay::dial(&self.path, &self.agent, from).await;
+        match &dialed {
+            Dial::Open(_) => *self.last.lock().unwrap() = None,
+            Dial::Shut { word, why } => {
+                let changed =
+                    self.last.lock().unwrap().replace(word.clone()).as_ref() != Some(word);
+                if changed && service_invoker::is_defect(word) {
+                    tracing::error!("{why}");
+                    if let Some(entries) = &self.entries {
+                        entries.failure(&service_invoker::entry_kind(word), why.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+        dialed
+    }
+}
+
+/// **The trace's opening, or the door closed with no agent laid** (Spec
+/// 7.2): the empty path stands for a config naming no `admin_socket`, and
+/// is never dialed. **A close before the header is confirmed once** by a
+/// second opening at the same position, where `until` leaves
+/// `CONFIRM_ROOM` (always, with none): a relay whose window passed admits
+/// the second, a relay that died refuses it `relay_unreachable`, and a
+/// second close is read as the refusal of the position, which is not proof
+/// (`weaver-admin-operator-contract` section 8.5).
+pub(crate) async fn dial_relay(
+    reach: &Reach,
+    from: &Position,
+    until: Option<tokio::time::Instant>,
+) -> relay::Dial {
+    if reach.path.as_os_str().is_empty() {
         return relay::Dial::Closed(NO_AGENT_LAID.to_owned());
     }
-    relay::dial(socket, from).await
+    let first = reach.dial(from).await;
+    if !matches!(first, Dial::Refused) {
+        return first;
+    }
+    let second = match until {
+        None => reach.dial(from).await,
+        Some(until)
+            if until.saturating_duration_since(tokio::time::Instant::now()) >= CONFIRM_ROOM =>
+        {
+            tokio::time::timeout_at(until - CONFIRM_MARGIN, reach.dial(from))
+                .await
+                .unwrap_or(Dial::Refused)
+        }
+        Some(_) => return Dial::Refused,
+    };
+    if matches!(second, Dial::Open(_)) {
+        tracing::info!(
+            "the trace closed before its header at offset {}, and a second opening was admitted: the request had reached the relay after its window",
+            from.offset
+        );
+    }
+    second
 }
 
 /// What the door hands the connection.
@@ -572,7 +652,7 @@ struct Opened {
 /// order, so the row converges to the trace's tail and the opening's `show`
 /// re-establishes it.
 async fn measure(
-    socket: &Path,
+    socket: &Reach,
     from: &Position,
     cap: u64,
     bound: Duration,
@@ -585,7 +665,7 @@ async fn measure(
     let mut marks = Vec::new();
     let dial = async |from: &Position, marks: &mut Vec<Item>| match tokio::time::timeout_at(
         until,
-        connect(socket, from, marks),
+        connect(socket, from, until, marks),
     )
     .await
     {
@@ -684,13 +764,14 @@ async fn measure(
 /// serves another file than `from` names, **each marked** at offset zero of
 /// the file now served: the stream and its start.
 async fn connect(
-    socket: &Path,
+    socket: &Reach,
     from: &Position,
+    until: tokio::time::Instant,
     marks: &mut Vec<Item>,
 ) -> Result<(relay::Stream, Position), String> {
     let mut at = from.clone();
     loop {
-        match dial_relay(socket, &at).await {
+        match dial_relay(socket, &at, Some(until)).await {
             // **Another file than the position names is a replacement at
             // any offset**, zero included: only the empty generation, the
             // position before any header was read, names no file. A request
@@ -731,7 +812,7 @@ async fn connect(
             Dial::Refused => {
                 return Err("the trace relay refused a request from offset zero".into());
             }
-            Dial::Closed(why) => return Err(why),
+            Dial::Closed(why) | Dial::Shut { why, .. } => return Err(why),
         }
     }
 }
@@ -766,7 +847,7 @@ fn progress(shared: &mut Shared, opened: &Opened) {
 /// the boundary and the opening's `show` re-establishes the row. Anything
 /// else fails the opening, the door left closed on the backoff. Every other
 /// position is planned as it stands.
-async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<Resume, String> {
+async fn verify(socket: &Reach, opened: &mut Opened, resume: &Resume) -> Result<Resume, String> {
     let acked = match resume {
         // An opening whose read already marked a discontinuity replays from
         // zero of its file, per `begin`, and verifies nothing here.
@@ -782,7 +863,7 @@ async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<R
     // **The verification dial gets only what remains of the opening's one
     // deadline**: where nothing remains it fails at once, a closed door on
     // the backoff, as a dial past the deadline does.
-    match tokio::time::timeout_at(opened.until, dial_relay(socket, acked)).await {
+    match tokio::time::timeout_at(opened.until, dial_relay(socket, acked, Some(opened.until))).await {
         Ok(Dial::Open(stream)) if stream.identity == opened.boundary.generation => {
             opened.resumed = Some(*stream);
             Ok(resume.clone())
@@ -801,7 +882,7 @@ async fn verify(socket: &Path, opened: &mut Opened, resume: &Resume) -> Result<R
             });
             Ok(Resume::Backfill)
         }
-        Ok(Dial::Closed(why)) => Err(why),
+        Ok(Dial::Closed(why) | Dial::Shut { why, .. }) => Err(why),
         Err(_) => Err(
             "the trace relay gave no header at the acknowledged position within the opening's bound"
                 .to_owned(),
@@ -931,7 +1012,7 @@ struct Step {
 /// relay that dropped admin-con while it was not reading, during a verb,
 /// costs nothing: the position is verified and the stream resumes.
 struct Door {
-    socket: PathBuf,
+    socket: Reach,
     backoff: Backoff,
     open: bool,
     /// The stream, while the door is open; none with the door open is a
@@ -962,7 +1043,7 @@ struct Door {
 }
 
 impl Door {
-    fn closed(socket: PathBuf, backoff: Backoff, at: Position, entries: Entries) -> Self {
+    fn closed(socket: Reach, backoff: Backoff, at: Position, entries: Entries) -> Self {
         Self {
             entries,
             socket,
@@ -1209,7 +1290,7 @@ impl Door {
     /// its start; and a relay that serves another file, or none, closed
     /// the door, so the next opening is an admission of the trace.
     async fn redial(&mut self, step: &mut Step) {
-        match dial_relay(&self.socket, &self.at).await {
+        match dial_relay(&self.socket, &self.at, None).await {
             Dial::Open(stream) if stream.identity == self.at.generation => {
                 self.stream = Some(*stream);
                 self.fresh = true;
@@ -1249,7 +1330,7 @@ impl Door {
                 self.close(false);
                 step.closed = true;
             }
-            Dial::Closed(why) => {
+            Dial::Closed(why) | Dial::Shut { why, .. } => {
                 tracing::info!("the trace door closed: {why}");
                 self.close(false);
                 step.closed = true;
@@ -1430,17 +1511,20 @@ pub async fn run<I: Invoker>(
             shutdown.clone(),
         )
     });
-    // **No `trace_socket`, no relay dialed** (Spec 7.2): the empty path
+    // **No `admin_socket`, no trace opened** (Spec 7.2): the empty path
     // stands for none, and `dial_relay` answers it closed for the reason
     // that no agent is laid without dialing.
-    let trace_socket = laid
-        .map(|laid| laid.trace_socket.to_owned())
-        .unwrap_or_default();
+    let reach = Reach::new(
+        laid.map(|laid| laid.admin_socket.to_owned())
+            .unwrap_or_default(),
+        &cfg.link.agent,
+        Some(entries.clone()),
+    );
     let hello_entries = entries.clone();
     let opts = ServeOptions {
         entries: entries.clone(),
         agent: cfg.link.agent.clone(),
-        socket: trace_socket.clone(),
+        socket: reach.clone(),
         backoff,
         backfill: cfg.backfill_bytes,
         boundary_bound: cfg.boundary_bound,
@@ -1450,7 +1534,7 @@ pub async fn run<I: Invoker>(
         slot: slot.clone(),
     };
     let grants_bound = cfg.grants_bound;
-    let socket = trace_socket;
+    let socket = reach;
     let backfill = cfg.backfill_bytes;
     let boundary_bound = cfg.boundary_bound;
     // The stop's grace runs from the moment the stop is asked, whatever
@@ -1589,7 +1673,7 @@ struct ServeOptions {
     entries: Entries,
     agent: String,
     /// The trace relay's socket.
-    socket: PathBuf,
+    socket: Reach,
     /// The door's redial, the connector's own backoff.
     backoff: Backoff,
     backfill: u64,

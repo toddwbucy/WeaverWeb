@@ -141,9 +141,8 @@ impl Rig {
 
     fn agent(&self, name: &str, extra: &str) -> String {
         format!(
-            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\ntrace_socket = \"{}\"\nadmin_socket = \"{}\"\nadmin_log = \"{}\"\n{extra}",
+            "\n[[agent]]\nbox = \"box1\"\nname = \"{name}\"\ngate_socket = \"{}\"\nadmin_socket = \"{}\"\nadmin_log = \"{}\"\n{extra}",
             self.s(&format!("box/{name}/gate.sock")),
-            self.s(&format!("box/{name}/trace.sock")),
             self.s("box/admin.sock"),
             self.s(&format!("box/{name}/admin.log")),
         )
@@ -358,10 +357,6 @@ fn a_staged_config_is_the_handover_and_the_box_facts_and_loads() {
         assert_eq!(gate.gate_socket, rig.p(&format!("box/{agent}/gate.sock")));
         let admin = AdminConConfig::load(&admin_path).expect("admin-con loads its staged config");
         assert_eq!(admin.link.agent, agent);
-        assert_eq!(
-            admin.trace_socket,
-            Some(rig.p(&format!("box/{agent}/trace.sock")))
-        );
         assert_eq!(admin.admin_socket, Some(rig.p("box/admin.sock")));
         assert_eq!(
             admin.admin_log,

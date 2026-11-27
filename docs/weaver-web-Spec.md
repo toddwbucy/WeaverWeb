@@ -5406,13 +5406,16 @@ object), from the absolute path its config names as the box fact
 
 **admin-con holds its connection with no agent laid**, on the Planner's word of
 2026-11-25 accepting the plan, since an appliance pairs before any agent stands on
-it and its loop is installed over admin-con (section 8.2). **Its three box facts,
-`trace_socket`, `admin_socket` and `admin_log`, stand together**, on the Planner's
-word of the same day: none is an appliance with no agent laid, all three a laid
-agent, each an absolute path as before, and some and not all a half-done install,
-refused at load naming what is missing. One fact, the agent laid or not
+it and its loop is installed over admin-con (section 8.2). **Its box facts,
+`admin_socket` and `admin_log`, stand together**, on the Planner's
+word of the same day: neither is an appliance with no agent laid, both a laid
+agent, each an absolute path as before, and one alone a half-done install,
+refused at load naming what is missing. A config naming a member an older
+admin-con read, `weaver_admin` or `trace_socket`, is refused at load naming
+it, so a config laid before the service's socket never starts silently
+unlaid. One fact, the agent laid or not
 (`AdminConConfig::laid`), chooses the invoker and the start line. **With no agent
-laid** the door reads closed for that reason and admin-con dials no relay, the
+laid** the door reads closed for that reason and admin-con opens no trace, the
 ceiling is empty and admin-con asks the service nothing, so the server asks no verb, and no
 `admin.log` is read and no entry raised, so an appliance with no agent shows no
 alert for files that do not yet exist. A config the
@@ -5521,8 +5524,9 @@ to: web-a-verb-asks-the-service-and-reads-its-run-after-a-drop
 operator's rulings of 2026-11-26 the sudo rule moves to the weaver-admin
 service's account, and admin-con asks that service for the grants, a verb,
 the trace and the admin log's lines on the box's local socket. The grants
-and the verbs moved onto it in the stack's third child, as the paragraphs
-above state; the trace and the log follow in its fourth and fifth.
+and the verbs moved onto it in the stack's third child, and the trace in
+its fourth, as the paragraphs above and below state; the log follows in
+its fifth.
 The client is `src/link/admin_service.rs`. Each connection opens with one
 line naming the contract's version 1, its purpose and the configured agent,
 and the service answers `open` with its `instance`, or one `refused` line
@@ -5620,6 +5624,28 @@ declared reader is the whole of the box's fan-out: more readers are this
 crate's to serve, from the server, never the box's. The stream is one-way
 and nothing behind the sink reaches back; what admin-con decides from
 reading it comes back by running a verb, per the contract's section 6.
+**admin-con reaches the relay through the weaver-admin service** (the
+stack's fourth child, 2026-11-27), per `weaver-admin-operator-contract`
+section 8.5 at WeaverAgent `265a332d`: it opens a `trace` connection on the
+service's socket naming its agent, and after the service's `open` the
+connection is the relay's wire, which the paragraphs below describe
+unchanged. admin-con sends its whole request within one second of reading
+`open`. **Every refusal of the opening is a closed door, never a refusal of
+the position**: `relay_unreachable`, `full` and `opening_late` alike, the
+door retried on the backoff; a word that says admin-con or its config is at
+fault (`opening_malformed`, `version_unknown`, `purpose_unknown`,
+`name_refused`) adds a connector failure entry, its kind `service_<word>`,
+once per change of word and not at every retry. **A close before the
+header has three causes**: the relay's refusal of the position, a relay
+that died after the service dialed it, or a request that reached the relay
+after its window. admin-con confirms it once, opening again at the same
+position where at least two seconds of the opening's deadline remain (the
+second opening stopping one second short of it), and always on the
+stream's redial, which has no deadline: a relay whose window passed admits
+the second opening, and the stream goes on unmarked; a relay that died is
+refused `relay_unreachable`, a closed door; and a second close is read as
+the refusal, which is not proof. With less of the deadline left, the first
+close is the refusal, as before.
 **The load event in that stream, and its `wall_ms`, are the harness's**,
 written on the harness's clock, which is not monotonic, and carried by the
 sink admin opens, per `toddwbucy/WeaverAgent#59`. It carries the
@@ -6254,7 +6280,7 @@ verbs, the trace and the setup's asks on admin-con and the admin plane, as built
   whatever the machine's routes. Where it is absent the connector dials by the routes, as
   built. **It is a box fact appended after each adopt, by whoever appends it**: `adopt`
   writes the config back to its key and writes its tail again from the answer (section
-  8.2), so a member appended after one adopt is gone after the next, as `trace_socket`
+  8.2), so a member appended after one adopt is gone after the next, as `admin_socket`
   is. The appliance's setup script appends admin-con's from the management card after
   every adopt, and gate-con's from the data card at the loop's install.
 
@@ -6939,8 +6965,8 @@ repository, read by the staging tool alone:
   `admin_con_binary`, and `handover`, the directory `register` wrote into
   (its `--out`), given with an agent and only then.
 - **`[[agent]]`, one per agent on the box**: `box` and `name` as registered,
-  the four box facts the connectors' configs require (`gate_socket`,
-  `trace_socket`, `admin_socket`, `admin_log`), and optionally
+  the three box facts the connectors' configs require (`gate_socket`,
+  `admin_socket`, `admin_log`), and optionally
   `stop_grace_secs`, `verb_bound_secs` and `backfill_bytes`, which default
   as admin-con's config does. **`backfill_bytes` is bounded as admin-con
   bounds it**, on this document's election of 2026-11-13: at most 268435456
@@ -8052,6 +8078,8 @@ two connectors report.
 | the WebAuthn library links into the server binary alone | measurement and perturbation in `tests/connectors_link.rs`: `ldd` on the connectors as `cargo test` builds them finds no `libcrypto`, and on the server binary finds it, which shows the reading; and the package's normal graph without the default features holds no `openssl-sys` and no `webauthn-rs`, the build CLAUDE.md gives for agent boxes. Make the library a dependency the feature does not carry, and the graph holds it |
 | the admission's `show` is required only where the ceiling grants it | perturbation: ask `show` at every admission, and an agent whose ceiling grants no `show` is closed `admission_incomplete` at every reconnection and never stays admitted; skip it where it is granted, and the row reads the last process's state as current |
 | the ceiling declared in the hello is exactly what the weaver-admin service's `grants` answer names, among the eight verbs (section 7.2) | perturbation in `src/link/service_invoker_tests.rs`, against the fake service, `the_grants_are_the_services_list_and_every_refusal_names_its_word`: answer `grants` with the eight verbs whatever the service names, and a verb it does not grant is declared (measured 2026-11-27) |
+| admin-con opens the trace on the weaver-admin service's socket, and every refusal of the opening is a closed door, never a refusal of the position, with one entry per change of a word that says admin-con is at fault (section 7.2) | in `src/link/admin_con_tests.rs`, against the fake service spliced to the fake relay: `a_relay_that_died_closes_the_door_with_no_mark_and_no_alert` (the service's `open`, a close before the header, then `relay_unreachable`), and `a_refused_trace_opening_is_a_closed_door_with_one_entry_per_change`; perturbation: map `relay_unreachable` to the relay's refusal, and the first test's window carries a mark of the offset's refusal (measured 2026-11-27) |
+| a close before the trace's header is confirmed once, and a relay whose window passed is admitted at the same offset with no mark (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `a_close_before_the_header_is_opened_once_more_and_a_passed_window_admits_it`: drop the confirmation, and the close is read as the refusal, the file relayed again from its start (`[1, 2, 1, 2, 3]` for `[1, 2, 3]`; measured 2026-11-27) |
 | a verb asks the weaver-admin service on a control connection of its own, every word that can answer it placed, and after a drop its run read by the service's `run` answer (section 7.2) | tests in `src/link/service_invoker_tests.rs` against the fake service, `every_word_at_a_verb_is_placed` reading the fourteen words a verb can meet and each row of the drop table in a test of its own; perturbations: read the service's `busy` as `fault`, and `every_word_at_a_verb_is_placed` is red; read another `instance` as "did not run", and `a_restart_after_a_drop_is_unknown` answers `not_started`; set the baseline aside, reading a drop with no id held by its verb alone, and `a_drop_after_a_show_or_a_fresh_start_takes_no_earlier_end_as_its_own`, `no_socket_for_the_bound_after_a_drop_is_unknown` and `a_poll_refused_for_good_is_unknown_and_a_passing_word_waits` each answer an earlier run's outcome as the later `load`'s; send a dropped `show` to the drop table, and `a_dropped_show_is_unknown` answers `not_started`; in `a_refusal_after_started_or_by_an_unknown_word_reads_the_run`, drop the guard on the held id, and a refusal after `started` answers `busy`, and read every word but `ask_outstanding` as a refusal before the start, and a word no verb's refusal holds answers `not_started` (each measured 2026-11-27) |
 | a verb the service refuses `not_granted` is audited `failed`, never run, and raises a failure rather than an unknown (sections 2.13, 2.14) | perturbation in `src/link/service_invoker_tests.rs`, against the real listener, `not_granted_is_audited_as_never_run`: leave `not_granted` out of the listener's `NEVER_RAN`, and the outcome stays unwritten (measured 2026-11-27) |
 | a connector never acts on the agent: admin-con's stop invokes nothing | perturbation in `src/link/admin_con_tests.rs`: restore the orderly stop's `unload`, and a shutdown with `unload` in the ceiling invokes it. And against a fake `sudo` in `src/link/sudo_invoker_tests.rs`, where the rules grant `unload`, the stop runs no line, and with a child in flight it waits for the child and runs none |
@@ -8195,7 +8223,7 @@ two connectors report.
 | `gate_listen` and `gate_address` parse, default absent, and `gate_address` without `gate_listen` is refused at load; gate-con's config carries the data door's address (section 8) | `src/config.rs`'s tests, `the_data_door_is_optional_and_its_address_needs_it`; perturbation in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: write the management door's address into gate-con's config, and the two-door case fails (measured 2026-11-25) |
 | every line on the weaver-admin service's socket is read within its bound and never past it: the opening's answer at 4096 bytes within 11 seconds, a control line at 256 KiB, a log line at 64 KiB, and the connector's own lines at 4096 bytes before a byte is sent (section 7.2) | tests in `src/link/admin_service_tests.rs` against the fake service of `src/link/fake_service.rs`, among them every opening word at each purpose it answers; perturbation, `an_answer_past_its_bound_is_malformed`: read the opening's answer at `usize::MAX` in place of `OPENING_BOUND`, and the client answers `Open` on a padded answer past 4096 bytes (measured 2026-11-27) |
 | admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with nothing asked of the service, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener on a row whose gate is not enrolled, run as the binary runs it, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: read an absent `admin_log` as a failure, and an alert stands (measured 2026-11-25); choose the service's invoker with no agent laid, and its unanswered grants raise an alert (measured 2026-11-27) |
-| admin-con's three box facts stand together, one fact chooses the invoker, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `the_box_facts_stand_together_and_one_fact_chooses_the_invoker`: drop the refusal of some and not all, and the half-laid config loads; drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (each measured 2026-11-25) A config naming the retired `weaver_admin` is refused at load naming it, in the same test: drop the refusal, and the old config loads with the member ignored (measured 2026-11-27) |
+| admin-con's box facts stand together, one fact chooses the invoker, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `the_box_facts_stand_together_and_one_fact_chooses_the_invoker`: drop the refusal of some and not all, and the half-laid config loads; drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (each measured 2026-11-25) A config naming the retired `weaver_admin` or `trace_socket` is refused at load naming it, in the same test: drop the refusal, and the old config loads with the member ignored (measured 2026-11-27) |
 | an admission on a plane a pairing set to not enrolled is refused `not_live`, never as a store failure (section 8) | perturbation in `src/link/tests.rs`, `an_admission_on_a_plane_set_to_none_is_refused_not_live`: read the fingerprint as a string, and the admission fails decoding (measured 2026-11-25) |
 | a mistyped `local_address` is refused naming the member and never its value (section 8) | perturbation in `src/link/admin_con_tests.rs`, `a_mistyped_local_address_is_refused_naming_the_member`: drop the member from admin-con's list, and the refusal names none; drop the check by name in `client::parse_config`, and the refusal names the file's first member, since serde's flatten drops the member's place (each measured 2026-11-25) |
 

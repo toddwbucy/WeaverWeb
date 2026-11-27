@@ -404,7 +404,6 @@ fn box_facts(plane: Plane) -> &'static str {
         }
         Plane::Admin => {
             "\n# The box's facts, added on the box by the install:\n\
-             # trace_socket = \"<the agent's trace relay socket>\"\n\
              # admin_socket = \"<the weaver-admin service's socket, absolute>\"\n\
              # admin_log = \"<the agent's admin.log, absolute>\"\n\
              # verb_bound_secs = 960    # past the box's load bound\n\

@@ -330,7 +330,8 @@ async fn installed_as(
     let path = PathBuf::from(answer.value["configs"][1].as_str().unwrap());
     assert!(path.ends_with("admin-con.toml"));
     let mut extra = format!(
-        "admin_socket = {}\n",
+        "key_file = {}\nadmin_socket = {}\n",
+        toml::Value::String(answer.value["keys"][1].as_str().unwrap().to_owned()),
         toml::Value::String(socket.display().to_string())
     );
     if let Some(bytes) = backfill {
@@ -1044,6 +1045,7 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
     let dir = crate::test_dir::tempdir().unwrap();
     let text = |plane: Plane, extra: &str| {
         let link = server.link(plane);
+        let key_file = super::client_tests::key_file_in(dir.path(), &link);
         let mut table = toml::Table::new();
         table.insert("server".into(), link.server.into());
         table.insert("server_name".into(), link.server_name.into());
@@ -1051,8 +1053,8 @@ async fn an_admin_con_config_that_is_not_trusted_is_refused_at_start() {
         table.insert("agent_id".into(), link.agent_id.into());
         table.insert("plane".into(), plane.as_str().into());
         table.insert("server_certificate".into(), link.server_certificate.into());
+        table.insert("key_file".into(), key_file.into());
         table.insert("certificate".into(), link.certificate.into());
-        table.insert("key".into(), link.key.into());
         format!("{}{extra}", toml::to_string(&table).unwrap())
     };
     let write = |name: &str, content: String| {
@@ -4342,6 +4344,18 @@ async fn admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_aler
     assert!(answer.ok, "{}", answer.value);
     let id: AgentId = answer.value["agent"].as_str().unwrap().parse().unwrap();
     let path = PathBuf::from(answer.value["configs"][1].as_str().unwrap());
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(
+            format!(
+                "key_file = {}\n",
+                toml::Value::String(answer.value["keys"][1].as_str().unwrap().to_owned())
+            )
+            .as_bytes(),
+        )
+        .unwrap();
     sqlx::query(
         "UPDATE agent SET gate_fingerprint = NULL, gate_authority = NULL, gate_state = 'none' \
          WHERE agent_id = $1",
@@ -4392,6 +4406,9 @@ async fn one_box_fact_chooses_the_invoker_and_retired_members_are_refused() {
         crate::link::authority::Authority::init(&dir.path().join("authority"), "weaver-web", &[])
             .unwrap();
     let credential = authority.mint_client("karl", Plane::Admin).unwrap();
+    let key_file = dir.path().join("admin-con.key");
+    super::client_tests::write_mode(&key_file, &credential.key_pem, 0o640);
+    let key_file = key_file.display().to_string();
     let mut table = toml::Table::new();
     for (k, v) in [
         ("server", "127.0.0.1:1"),
@@ -4401,7 +4418,7 @@ async fn one_box_fact_chooses_the_invoker_and_retired_members_are_refused() {
         ("plane", "admin"),
         ("server_certificate", authority.certificate_pem()),
         ("certificate", &credential.certificate_pem),
-        ("key", &credential.key_pem),
+        ("key_file", &key_file),
     ] {
         table.insert(k.into(), v.into());
     }
@@ -4486,6 +4503,9 @@ async fn a_mistyped_local_address_is_refused_naming_the_member() {
         (Plane::Gate, "gate_socket = \"/g.sock\"\n"),
     ] {
         let credential = authority.mint_client("karl", plane).unwrap();
+        let key_file = dir.path().join(format!("{}-con.key", plane.as_str()));
+        super::client_tests::write_mode(&key_file, &credential.key_pem, 0o640);
+        let key_file = key_file.display().to_string();
         let mut table = toml::Table::new();
         for (k, v) in [
             ("server", "127.0.0.1:1"),
@@ -4495,7 +4515,7 @@ async fn a_mistyped_local_address_is_refused_naming_the_member() {
             ("plane", plane.as_str()),
             ("server_certificate", authority.certificate_pem()),
             ("certificate", &credential.certificate_pem),
-            ("key", &credential.key_pem),
+            ("key_file", &key_file),
         ] {
             table.insert(k.into(), v.into());
         }

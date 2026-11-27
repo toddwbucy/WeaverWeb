@@ -366,8 +366,13 @@ async fn a_rotations_recovery_names_the_row_it_publishes() {
 
     let from = second_out.path().join(&r#box).join("karl");
     let to = first_out.path().join(&r#box).join("karl");
-    for config in ["gate-con.toml", "admin-con.toml"] {
-        std::fs::copy(from.join(config), to.join(format!("{config}.staging"))).unwrap();
+    for entry in [
+        "gate-con.toml",
+        "gate-con.key",
+        "admin-con.toml",
+        "admin-con.key",
+    ] {
+        std::fs::copy(from.join(entry), to.join(format!("{entry}.staging"))).unwrap();
     }
     let answer = super::verbs::rotate(
         &lab.store,

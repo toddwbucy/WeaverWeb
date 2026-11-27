@@ -1177,7 +1177,7 @@ async fn a_replacement_keeps_the_box_the_row_held() {
 // setup connection's two asks under the config `adopt` completed.
 // ---------------------------------------------------------------------------
 
-use crate::link::box_commands::{self, PairArgs};
+use crate::link::box_commands::{self, AdoptArgs, PairArgs, RequestArgs};
 use crate::link::box_line::{Printer, Status};
 use crate::link::client::{Asked, Connect, Link, LinkConfig};
 use crate::link::frames::{REPORT_BOUND, Refusal, SetupAsk, Stage};
@@ -1237,7 +1237,7 @@ async fn enrolled_on_box(
     let mut p = captured();
     let config = dir.join("admin-con.toml");
     assert_eq!(
-        box_commands::request(&mut p, Plane::Admin, &config),
+        box_commands::request(&mut p, &requesting(&dir.join("admin-con.key"))),
         Status::Done
     );
     let (out, _) = p.into_inner();
@@ -1298,16 +1298,41 @@ async fn enrolled_on_box(
     assert_eq!(paired["agent_id"].as_str(), Some(answer.agent_id.as_str()));
     assert_eq!(answer.gate, None, "the answer carries no gate certificate");
     let mut p = captured();
-    let status = box_commands::adopt(&mut p, Plane::Admin, &config, &dir.join("answer.json"));
+    let status = box_commands::adopt(
+        &mut p,
+        Plane::Admin,
+        &AdoptArgs {
+            request: dir.join("admin.request"),
+            answer: dir.join("answer.json"),
+            key_file: dir.join("admin-con.key"),
+            out: config.clone(),
+        },
+    );
     let (line, err) = outcome_of(p);
     assert_eq!(status, Status::Done, "{line} {err}");
     assert_eq!(line["event"], "adopted");
     assert_eq!(line["plane"], "admin");
+    // Laid as the install's root program lays it: the connector's group,
+    // 0640 (the test's own group standing for it).
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o640)).unwrap();
     answer
 }
 
+/// `request`'s arguments for a key file at `key_file`, in the test's own
+/// group.
+fn requesting(key_file: &std::path::Path) -> RequestArgs {
+    RequestArgs {
+        key_file: key_file.to_owned(),
+        group: crate::link::box_commands::tests::own_group(),
+    }
+}
+
+/// The link a connector would build from the config `adopt` wrote, its key
+/// read from the file the config names under the key's trust rule.
 fn link_of(config: &std::path::Path) -> Link {
-    let cfg: LinkConfig = toml::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    let mut cfg: LinkConfig = toml::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
+    cfg.load_key(config, &crate::link::client::Trust::connector())
+        .unwrap();
     Link::new(cfg).unwrap()
 }
 
@@ -1390,17 +1415,24 @@ async fn an_adopted_admin_con_connects_and_its_row_reads_admin_alone() {
     assert_eq!(rows_named(s, "karl").await, 1);
     // gate-con's own steps refuse an answer that carries no gate.
     let gate_config = on_box.path().join("gate-con.toml");
+    let gate_key = on_box.path().join("gate-con.key");
     let mut p = captured();
     assert_eq!(
-        box_commands::request(&mut p, Plane::Gate, &gate_config),
+        box_commands::request(&mut p, &requesting(&gate_key)),
         Status::Done
     );
+    let (out, _) = p.into_inner();
+    std::fs::write(on_box.path().join("gate.request"), out).unwrap();
     let mut p = captured();
     let status = box_commands::adopt(
         &mut p,
         Plane::Gate,
-        &gate_config,
-        &on_box.path().join("answer.json"),
+        &AdoptArgs {
+            request: on_box.path().join("gate.request"),
+            answer: on_box.path().join("answer.json"),
+            key_file: gate_key,
+            out: gate_config.clone(),
+        },
     );
     let (line, err) = outcome_of(p);
     assert_eq!(status, Status::Usage, "{line} {err}");
@@ -1594,6 +1626,16 @@ async fn the_setup_keeps_its_one_report_verbatim_a_second_run_replacing_it() {
             .await;
     assert!(registered.ok, "{}", registered.value);
     let zed = out.path().join("box-z").join("zed").join("admin-con.toml");
+    // The key file's box fact, as the install adds it.
+    std::io::Write::write_all(
+        &mut std::fs::OpenOptions::new().append(true).open(&zed).unwrap(),
+        format!(
+            "key_file = {}\n",
+            toml::Value::String(registered.value["keys"][1].as_str().unwrap().to_owned())
+        )
+        .as_bytes(),
+    )
+    .unwrap();
     let (status, line) = describe(&zed).await;
     assert_eq!(
         (status, line["reason"].as_str()),
@@ -1618,9 +1660,8 @@ async fn a_pair_whose_waiting_line_is_not_delivered_ends_at_once() {
     let Some(rig) = rig().await else { return };
     let dir = crate::test_dir::tempdir().unwrap();
     let mut p = captured();
-    let config = dir.path().join("admin-con.toml");
     assert_eq!(
-        box_commands::request(&mut p, Plane::Admin, &config),
+        box_commands::request(&mut p, &requesting(&dir.path().join("admin-con.key"))),
         Status::Done
     );
     let (out, _) = p.into_inner();

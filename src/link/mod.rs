@@ -71,6 +71,8 @@ mod service_invoker_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod trust_tests;
+#[cfg(test)]
 mod verbs_audit_tests;
 
 pub use authority::{Authority, ClientCredential, fingerprint};

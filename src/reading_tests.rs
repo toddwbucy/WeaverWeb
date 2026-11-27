@@ -546,7 +546,7 @@ async fn replaying() -> Option<(Rig, String, String, String, Connector)> {
     let s = rig.store().clone();
     let (_, ada_session) = admin(&rig.app, &s, &mut authenticator(), "ada").await;
     let (karl, handles) = rig.register(&ada_session, "box-a", "karl").await;
-    let (_, _, config) = rig.take(&handles[1], &ada_session).await;
+    let config = rig.take_config(&handles, 1, &ada_session).await;
     let (bea, session) = signed_in(&rig.app, &s, &mut authenticator(), "bea").await;
     let granted = host::grant_add(&s, &bea, "observer", Some(&karl), None).await;
     assert!(granted.ok, "{}", granted.value);
@@ -815,7 +815,7 @@ async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
     let s = rig.store().clone();
     let (_, ada_session) = admin(&rig.app, &s, &mut authenticator(), "ada").await;
     let (karl, handles) = rig.register(&ada_session, "box-a", "karl").await;
-    let (_, _, config) = rig.take(&handles[1], &ada_session).await;
+    let config = rig.take_config(&handles, 1, &ada_session).await;
     let (bea, session) = signed_in(&rig.app, &s, &mut authenticator(), "bea").await;
     let granted = host::grant_add(&s, &bea, "observer", Some(&karl), None).await;
     assert!(granted.ok, "{}", granted.value);
@@ -835,6 +835,21 @@ async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
     // The fake weaver-admin service the trace is opened on.
     let service = crate::link::fake_service::FakeService::start(&[], "idle");
     service.with(|s| s.relay = Some(relay.socket.clone()));
+    // Laid as the install lays it: the key a file of its own beside the
+    // config, which names it (the brief of 2026-11-27, child 6).
+    let mut table: toml::Table = config.parse().unwrap();
+    let key = table.remove("key").unwrap();
+    let key_file = dir.path().join("admin-con.key");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&key_file)
+        .unwrap();
+    file.write_all(key.as_str().unwrap().as_bytes()).unwrap();
+    drop(file);
+    table.insert("key_file".into(), key_file.display().to_string().into());
+    let config = toml::to_string(&table).unwrap();
     let path = dir.path().join("admin-con.toml");
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -972,7 +987,7 @@ async fn an_agent_with_admin_con_alone_reads_admin_alone_and_never_present() {
     let s = rig.store();
     let (_, admin_session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (karl, handles) = rig.register(&admin_session, "box-a", "karl").await;
-    let (_, _, admin_config) = rig.take(&handles[1], &admin_session).await;
+    let admin_config = rig.take_config(&handles, 1, &admin_session).await;
     let (bea, session) = signed_in(&rig.app, s, &mut authenticator(), "bea").await;
     // `operator` holds `turn`, so the turn form's absence is the gate's
     // doing and not the role's.

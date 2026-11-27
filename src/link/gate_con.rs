@@ -73,13 +73,25 @@ fn default_waiting_bound() -> usize {
 }
 
 impl GateConConfig {
-    /// Read the config under the trust rule of `client::read_private`, and
-    /// refuse one minted for the admin plane, one missing a member, or one
-    /// naming no turn in flight or more than `MAX_TURNS_IN_FLIGHT`. **A
-    /// parse error names its line and never prints it**: the file carries a
-    /// key, and a corrupted PEM line is the key's own bytes.
+    /// Read the config and its key under the connector's trust rule
+    /// (`client::read_trusted`, `client::Trust::connector`): the config by
+    /// `load_unkeyed`, then the key from `key_file` once the config has
+    /// passed (`LinkConfig::load_key`).
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let content = client::read_private(path)?;
+        let trust = client::Trust::connector();
+        let mut cfg = Self::load_unkeyed(path, &trust)?;
+        cfg.link.load_key(path, &trust)?;
+        Ok(cfg)
+    }
+
+    /// **The config alone, its key not read**: under `trust`, refusing one
+    /// minted for the admin plane, one missing a member, or one naming no
+    /// turn in flight or more than `MAX_TURNS_IN_FLIGHT`. **A parse error
+    /// names its line and never prints it**: a pasted key's bytes may stand
+    /// on it. The staging tool checks a composed config by it, whose key is
+    /// not yet laid at `key_file`.
+    pub fn load_unkeyed(path: &Path, trust: &client::Trust) -> anyhow::Result<Self> {
+        let content = client::read_trusted(path, client::Held::Config, trust)?;
         let cfg: Self = client::parse_config(path, &content, MEMBERS)?;
         cfg.link
             .expect_plane(Plane::Gate)
@@ -105,7 +117,7 @@ const MEMBERS: &[&str] = &[
     "plane",
     "server_certificate",
     "certificate",
-    "key",
+    "key_file",
     "local_address",
     "gate_socket",
     "turns_in_flight",

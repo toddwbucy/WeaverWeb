@@ -1,20 +1,20 @@
 {% extends "instrument.html" %}
-{% block title %}client configs - weaver-web{% endblock %}
+{% block title %}client configs and keys - weaver-web{% endblock %}
 {% block body %}
-{#- The two client configs a write minted, offered once each, to this
+{#- The two client configs and the two keys a write minted, offered once each, to this
     session alone, for a few minutes. This page carries their handles and
     never the configs. -#}
-<h1>Client configs for {{ agent }}</h1>
-<p class="lede">The agent is {{ verb }}. Take each config now: each is offered once, to this session alone, for {{ minutes }} minutes, and the server keeps neither. If one is lost, rotate the agent.</p>
+<h1>Client configs and keys for {{ agent }}</h1>
+<p class="lede">The agent is {{ verb }}. Take each config and each key now: each is offered once, to this session alone, for {{ minutes }} minutes, and the server keeps none. If one is lost, rotate the agent.</p>
 <section class="pane">
-  <header><span class="stage"><b>2</b> Provision</span><h2>Client configs</h2><span class="backing built">built</span><span class="source">the server's memory, for {{ minutes }} minutes</span></header>
+  <header><span class="stage"><b>2</b> Provision</span><h2>Client configs and keys</h2><span class="backing built">built</span><span class="source">the server's memory, for {{ minutes }} minutes</span></header>
   <div class="body">
   <ul>
     {% for config in waiting %}
     <li>
       <form method="post" action="/admin/agents/config">
         <input type="hidden" name="handle" value="{{ config.handle }}">
-        <button type="submit">Take the {{ config.plane }} config ({{ config.filename }})</button>
+        <button type="submit">Take the {{ config.plane }} {{ config.kind }} ({{ config.filename }})</button>
       </form>
     </li>
     {% endfor %}
@@ -25,13 +25,13 @@
       that could not be read is said to be unread, with both ways. -#}
   {%- match granted %}
   {%- when Some with (true) %}
-  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: <a href="/agents/{{ agent_id }}">the agent's page</a>. Between the two, the work is on the agent's box, which this server never reaches: install both configs and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
+  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: <a href="/agents/{{ agent_id }}">the agent's page</a>. Between the two, the work is on the agent's box, which this server never reaches: install both configs and both keys and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
   {%- when Some with (false) %}
-  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: the agent's page answers only to a grant on the agent, and you hold none. Another admin adds one on <a href="/admin/grants">Grants</a>, or the host's <code>grant add</code> does. Between the two, the work is on the agent's box, which this server never reaches: install both configs and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
+  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: the agent's page answers only to a grant on the agent, and you hold none. Another admin adds one on <a href="/admin/grants">Grants</a>, or the host's <code>grant add</code> does. Between the two, the work is on the agent's box, which this server never reaches: install both configs and both keys and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
   {%- when None %}
-  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: whether you hold a grant on the agent could not be read just now. <a href="/agents/{{ agent_id }}">The agent's page</a> answers if you do, and <a href="/admin/grants">Grants</a> is where one is added. Between the two, the work is on the agent's box, which this server never reaches: install both configs and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
+  <p class="next">Next, <span class="stage"><b>3</b> Run</span>: whether you hold a grant on the agent could not be read just now. <a href="/agents/{{ agent_id }}">The agent's page</a> answers if you do, and <a href="/admin/grants">Grants</a> is where one is added. Between the two, the work is on the agent's box, which this server never reaches: install both configs and both keys and the file derived from the agent's declaration, start both connectors, then ask <code>validate</code> from the agent's page.</p>
   {%- endmatch %}
   </div>
-  <footer>Each config holds its connector's private key. Carry it to the agent's box with the install script, readable only by the connector's own user, at mode 0600, and keep it out of every repository.</footer>
+  <footer>Each key holds its connector's private key, in a file of its own. Carry the four to the agent's box with the install, each key root's and read through its connector's own group alone at mode 0640, and keep them out of every repository. The install adds key_file to each config, naming where its key stands.</footer>
 </section>
 {% endblock %}

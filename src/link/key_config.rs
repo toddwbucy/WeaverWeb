@@ -1,20 +1,16 @@
 //! conforms: web-an-adopted-pair-connects
+//! conforms: web-a-connectors-key-is-a-file-of-its-own
 //!
-//! **A connector's key and its config, made on the box** (Spec 8.2): `request`
-//! creates the config holding the connector's new key alone, under the
-//! connector's own account, and `adopt` completes that same file in place
-//! with the members `register` writes, once the answer's certificate for its
-//! plane is over its key and verifies under the answer's authority.
-//!
-//! **`adopt` appends and never rewrites the key** (the brief's decision 5, as
-//! amended on 2026-11-17). It finds the key's prefix by parsing the exact
-//! bytes `request` writes, never a stored length, refuses a file whose prefix
-//! is not a well-formed key-only config, and replaces only what follows the
-//! prefix, so a crash at any write leaves the key byte for byte and a re-run
-//! completes the file. A config left with no certificate is refused by the
-//! service at its start, its `certificate` member missing.
+//! **A connector's key and its config, made on the box** (Spec 8.2; the
+//! brief of 2026-11-27, child 6): `request`, run as root, creates the
+//! connector's key file new, its group the connector's and its mode 0640
+//! set by descriptor before the first key byte is written, and prints the
+//! certificate request; `adopt`, run unprivileged, checks the pairing's
+//! answer against the request's public half and writes the connector's
+//! config to a new file, naming the key file it never opens. A fixed root
+//! program of the appliance's lays that config (the brief's install list).
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -22,74 +18,9 @@ use std::sync::Arc;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, UnixTime};
 use serde::{Deserialize, Serialize};
 
-use crate::link::client::{CONFIG_BOUND, open_private};
 use crate::link::frames::Plane;
 
-/// The first line of a key-only config, naming the command that wrote it
-/// and the plane, so the other connector's `adopt` refuses it.
-fn header(plane: Plane) -> String {
-    format!(
-        "# Written by `{}-con request`: this connector's key alone, which `adopt` completes.\n",
-        plane.as_str()
-    )
-}
-
-const KEY_OPEN: &str = "key = \"\"\"\n";
-const PEM_BEGIN: &str = "-----BEGIN PRIVATE KEY-----\n";
-const PEM_END: &str = "-----END PRIVATE KEY-----\n";
-const KEY_CLOSE: &str = "\"\"\"\n";
-
-/// **The exact bytes `request` writes**: the header, then the key's PKCS #8
-/// PEM as a TOML multi-line string. The PEM's alphabet holds no quote and no
-/// backslash, so the string's value is the PEM unchanged.
-pub fn key_only(plane: Plane, key_pem: &str) -> String {
-    format!("{}{KEY_OPEN}{key_pem}{KEY_CLOSE}", header(plane))
-}
-
-/// **The key's prefix of a config**, parsed from the bytes `request` writes:
-/// the key's PEM and the prefix's length, or why the file is not a
-/// well-formed key-only config for this plane. Whatever follows is a tail
-/// `adopt` may replace.
-pub fn prefix_of(plane: Plane, content: &str) -> Result<(String, usize), &'static str> {
-    let opening = format!("{}{KEY_OPEN}", header(plane));
-    let rest = content
-        .strip_prefix(opening.as_str())
-        .ok_or("the config does not open as this plane's request wrote it")?;
-    let close = format!("{PEM_END}{KEY_CLOSE}");
-    let at = rest
-        .find(close.as_str())
-        .ok_or("the config's key is not closed as request wrote it")?;
-    let key_pem = &rest[..at + PEM_END.len()];
-    let body = key_pem
-        .strip_prefix(PEM_BEGIN)
-        .and_then(|b| b.strip_suffix(PEM_END))
-        .ok_or("the config's key is not one PKCS #8 PEM block")?;
-    if body.is_empty()
-        || !body.lines().all(|l| {
-            !l.is_empty()
-                && l.len() <= 64
-                && l.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
-        })
-        || !body.ends_with('\n')
-    {
-        return Err("the config's key is not one PKCS #8 PEM block");
-    }
-    // The prefix parses as a key-only config, and nothing else.
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    #[allow(dead_code)]
-    struct KeyOnly {
-        key: String,
-    }
-    let length = opening.len() + at + close.len();
-    toml::from_str::<KeyOnly>(&content[..length])
-        .map_err(|_| "the config's prefix is not a key-only config")?;
-    signing_key(key_pem).ok_or("the config's key is not an ECDSA P-256 key")?;
-    Ok((key_pem.to_owned(), length))
-}
-
-/// The key as the TLS provider loads it, ECDSA P-256 alone.
+/// The key as the TLS provider loads it, ECDSA alone.
 fn signing_key(key_pem: &str) -> Option<Arc<dyn rustls::sign::SigningKey>> {
     let der = rustls_pemfile::private_key(&mut key_pem.as_bytes()).ok()??;
     let PrivateKeyDer::Pkcs8(_) = &der else {
@@ -100,6 +31,131 @@ fn signing_key(key_pem: &str) -> Option<Arc<dyn rustls::sign::SigningKey>> {
         .load_private_key(der)
         .ok()?;
     (key.algorithm() == rustls::SignatureAlgorithm::ECDSA).then_some(key)
+}
+
+/// **One PKCS #8 ECDSA P-256 PEM block, and nothing else**: what a key file
+/// holds.
+pub fn one_key(pem: &str) -> bool {
+    let mut bytes = pem.as_bytes();
+    let items: Vec<_> = rustls_pemfile::read_all(&mut bytes).collect();
+    let [Ok(rustls_pemfile::Item::Pkcs8Key(_))] = items.as_slice() else {
+        return false;
+    };
+    signing_key(pem).is_some()
+        && rcgen::KeyPair::from_pem(pem)
+            .is_ok_and(|k| k.algorithm() == &rcgen::PKCS_ECDSA_P256_SHA256)
+}
+
+/// **The certificate is over the key**, `adopt`'s `key_mismatch` check as
+/// a connector runs it again at every load.
+pub fn over_key(certificate_pem: &str, key_pem: &str) -> bool {
+    let (Some(certificate), Some(key)) = (one_certificate(certificate_pem), signing_key(key_pem))
+    else {
+        return false;
+    };
+    rustls::sign::CertifiedKey::new(vec![certificate], key)
+        .keys_match()
+        .is_ok()
+}
+
+/// The DER prefix of a P-256 key's SubjectPublicKeyInfo, up to its point:
+/// `SEQUENCE { SEQUENCE { id-ecPublicKey, prime256v1 }, BIT STRING 04 ... }`.
+const P256_SPKI: [u8; 27] = [
+    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+    0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04,
+];
+
+/// One DER element: its tag, its content, the whole element, and what
+/// follows it.
+struct Element<'a> {
+    tag: u8,
+    content: &'a [u8],
+    whole: &'a [u8],
+    rest: &'a [u8],
+}
+
+/// **One DER element** at the start of `der`. Definite lengths of at most
+/// four bytes alone, as a certificate's are; `None` on anything else.
+fn der_element(der: &[u8]) -> Option<Element<'_>> {
+    let (&tag, rest) = der.split_first()?;
+    let (&first, rest) = rest.split_first()?;
+    let (len, rest) = if first < 0x80 {
+        (usize::from(first), rest)
+    } else {
+        let n = usize::from(first & 0x7f);
+        if n == 0 || n > 4 || rest.len() < n {
+            return None;
+        }
+        let len = rest[..n]
+            .iter()
+            .fold(0usize, |len, b| (len << 8) | usize::from(*b));
+        (len, &rest[n..])
+    };
+    if rest.len() < len {
+        return None;
+    }
+    let header = der.len() - rest.len();
+    Some(Element {
+        tag,
+        content: &rest[..len],
+        whole: &der[..header + len],
+        rest: &rest[len..],
+    })
+}
+
+const SEQUENCE: u8 = 0x30;
+const INTEGER: u8 = 0x02;
+/// A certificate's `[0] EXPLICIT Version`.
+const VERSION: u8 = 0xa0;
+
+/// **The P-256 key in the public-key field of a structure**: `der` is one
+/// SEQUENCE whose first member is the signed part, a SEQUENCE; its members
+/// are walked past `skip`, each tag checked, and the next is the
+/// SubjectPublicKeyInfo, which must be a P-256 key's. Bytes of a key
+/// anywhere else in the structure, an extension's among them, are never
+/// read as its key.
+fn spki_field<'a>(der: &'a [u8], skip: &[u8]) -> Option<&'a [u8]> {
+    let outer = der_element(der)?;
+    if outer.tag != SEQUENCE || !outer.rest.is_empty() {
+        return None;
+    }
+    let signed = der_element(outer.content)?;
+    if signed.tag != SEQUENCE {
+        return None;
+    }
+    let mut members = signed.content;
+    for (i, want) in skip.iter().enumerate() {
+        let member = der_element(members)?;
+        // A certificate's version is optional; its absence is version 1.
+        if i == 0 && *want == VERSION && member.tag != VERSION {
+            continue;
+        }
+        if member.tag != *want {
+            return None;
+        }
+        members = member.rest;
+    }
+    let spki = der_element(members)?;
+    (spki.tag == SEQUENCE
+        && spki.whole.len() == P256_SPKI.len() + 64
+        && spki.whole.starts_with(&P256_SPKI))
+    .then_some(spki.whole)
+}
+
+/// The P-256 key a certificate carries in its public-key field: past the
+/// version, the serial, the signature's algorithm, the issuer, the validity
+/// and the subject.
+fn certificate_key(der: &[u8]) -> Option<&[u8]> {
+    spki_field(
+        der,
+        &[VERSION, INTEGER, SEQUENCE, SEQUENCE, SEQUENCE, SEQUENCE],
+    )
+}
+
+/// The P-256 key a certificate request carries: past the version and the
+/// subject.
+fn csr_key(der: &[u8]) -> Option<&[u8]> {
+    spki_field(der, &[INTEGER, SEQUENCE])
 }
 
 /// **A new key and its certificate request**, ECDSA P-256 with SHA-256, the
@@ -117,43 +173,98 @@ pub fn new_key() -> anyhow::Result<(String, String)> {
 /// Why `request` made nothing.
 #[derive(Debug)]
 pub enum RequestRefused {
-    /// The config's path holds a file or a link: `usage`.
+    /// The key file's path holds a file or a link: `usage`.
     Exists(String),
     /// The command's own failure: `fault`.
     Fault(String),
 }
 
-/// **`request`'s config** (Spec 8.2): created new at `path`, never through a
-/// link, owner-only, holding the key alone, synced with its directory. Answers
-/// the certificate request's PEM.
-pub fn request(plane: Plane, path: &Path) -> Result<String, RequestRefused> {
+/// **`request`'s key file** (Spec 8.2; the brief of 2026-11-27, child 6):
+/// created new at `key_file`, never through a link; any access list it
+/// inherited from its folder's default removed, its group set to `group`
+/// and its mode to 0640, all by descriptor before the first key byte is
+/// written, its owner the account that runs it, which is root; holding the
+/// key's PEM alone, synced with its directory. **The inherited list is
+/// removed, not refused**: a folder's default list is the folder's and may
+/// grant the service read on configs, and a file created under one carries
+/// its named entries behind a mask of nothing, which the 0640 would open;
+/// removed before the mode is set, the key carries the three base entries
+/// alone, and a list still found after is refused. Answers the certificate
+/// request's PEM. A failure after the create removes the file, so a re-run
+/// is not refused by it.
+pub fn request(key_file: &Path, group: libc::gid_t) -> Result<String, RequestRefused> {
+    use std::os::fd::AsRawFd;
     let fault = |what: &str, e: &dyn std::fmt::Display| {
-        RequestRefused::Fault(format!("{what} {}: {e}", path.display()))
+        RequestRefused::Fault(format!("{what} {}: {e}", key_file.display()))
     };
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
+        .open(key_file)
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::AlreadyExists => RequestRefused::Exists(format!(
                 "{} exists: request makes a new key into a new file",
-                path.display()
+                key_file.display()
             )),
             _ => fault("creating", &e),
         })?;
-    // The umask narrows the mode at the create, and `adopt` writes the file,
-    // so the owner's read and write are set whatever it is.
-    use std::os::unix::fs::PermissionsExt;
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))
-        .map_err(|e| fault("setting the mode of", &e))?;
-    let (key_pem, request) = new_key().map_err(|e| fault("making the key for", &e))?;
-    file.write_all(key_only(plane, &key_pem).as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|e| fault("writing", &e))?;
-    sync_parent(path).map_err(|e| fault("syncing the directory of", &e))?;
-    Ok(request)
+    let made = (|| -> Result<String, RequestRefused> {
+        let fd = file.as_raw_fd();
+        // SAFETY: a descriptor this call opened; the owner left unchanged.
+        if unsafe { libc::fchown(fd, libc::uid_t::MAX, group) } < 0 {
+            return Err(fault(
+                "setting the group of",
+                &std::io::Error::last_os_error(),
+            ));
+        }
+        remove_access_list(fd).map_err(|e| fault("removing the inherited access list of", &e))?;
+        // SAFETY: as above.
+        if unsafe { libc::fchmod(fd, 0o640) } < 0 {
+            return Err(fault(
+                "setting the mode of",
+                &std::io::Error::last_os_error(),
+            ));
+        }
+        let (key_pem, request) = new_key().map_err(|e| fault("making the key for", &e))?;
+        file.write_all(key_pem.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|e| fault("writing", &e))?;
+        sync_parent(key_file).map_err(|e| fault("syncing the directory of", &e))?;
+        Ok(request)
+    })();
+    if made.is_err() {
+        let _ = std::fs::remove_file(key_file);
+    }
+    made
+}
+
+const ACL_ACCESS: &std::ffi::CStr = c"system.posix_acl_access";
+
+/// **The file's access list removed by descriptor**, then read back to be
+/// none: a filesystem that keeps no lists has none to remove.
+fn remove_access_list(fd: std::os::fd::RawFd) -> std::io::Result<()> {
+    // SAFETY: a valid descriptor and a NUL-terminated name.
+    if unsafe { libc::fremovexattr(fd, ACL_ACCESS.as_ptr()) } < 0 {
+        let e = std::io::Error::last_os_error();
+        if !matches!(e.raw_os_error(), Some(libc::ENODATA) | Some(libc::ENOTSUP)) {
+            return Err(e);
+        }
+    }
+    // SAFETY: a valid descriptor, a NUL-terminated name, and a zero-length
+    // read, which asks the size alone.
+    let size = unsafe { libc::fgetxattr(fd, ACL_ACCESS.as_ptr(), std::ptr::null_mut(), 0) };
+    if size >= 0 {
+        return Err(std::io::Error::other(
+            "an access list still stands after its removal",
+        ));
+    }
+    let e = std::io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(libc::ENODATA) | Some(libc::ENOTSUP) => Ok(()),
+        _ => Err(e),
+    }
 }
 
 /// The directory that holds `path`, synced, so a new name survives a crash.
@@ -163,6 +274,57 @@ fn sync_parent(path: &Path) -> std::io::Result<()> {
         _ => Path::new("."),
     };
     std::fs::File::open(parent)?.sync_all()
+}
+
+/// The longest request line `pair` and `adopt` read: a connector's `request`
+/// line is far inside it.
+pub const REQUEST_LINE_BOUND: usize = 16 * 1024;
+
+/// **The request line a connector's `request` printed**, read from `path`
+/// never through a link, a regular file within its bound: the request's PEM.
+pub fn read_request_line(path: &Path) -> Result<String, String> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| format!("opening {}: {e}", path.display()))?;
+    let regular = file.metadata().map(|m| m.file_type().is_file());
+    if !matches!(regular, Ok(true)) {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    let mut text = String::new();
+    file.take(REQUEST_LINE_BOUND as u64 + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("reading {}: {e}", path.display()))?;
+    #[derive(serde::Deserialize)]
+    struct Line {
+        event: String,
+        request: String,
+    }
+    match serde_json::from_str::<Line>(text.trim_end()) {
+        Ok(line)
+            if line.event == "request"
+                && line
+                    .request
+                    .starts_with("-----BEGIN CERTIFICATE REQUEST-----")
+                && text.len() <= REQUEST_LINE_BOUND =>
+        {
+            Ok(line.request)
+        }
+        _ => Err(format!(
+            "{} is not the request line a connector's request printed",
+            path.display()
+        )),
+    }
+}
+
+/// The P-256 public key of a request's PEM, as its SubjectPublicKeyInfo.
+fn request_key(request_pem: &str) -> Option<Vec<u8>> {
+    let mut bytes = request_pem.as_bytes();
+    match rustls_pemfile::read_one(&mut bytes).ok()?? {
+        rustls_pemfile::Item::Csr(der) => csr_key(der.as_ref()).map(<[u8]>::to_vec),
+        _ => None,
+    }
 }
 
 /// **The answer file** (Spec 8.2): what `pair` writes once the console
@@ -257,21 +419,11 @@ fn one_certificate(pem: &str) -> Option<CertificateDer<'static>> {
     certificates.next().is_none().then_some(first)
 }
 
-/// **Where a write of `adopt` stands**, for the tests that end it at each.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Boundary {
-    /// The config opened and checked, nothing written.
-    Opened,
-    /// The tail written into the middle of the certificate.
-    MidCertificate,
-    /// The tail written whole, its sync still to come.
-    BeforeSync,
-}
-
-/// Why `adopt` wrote nothing more.
+/// Why `adopt` wrote nothing.
 #[derive(Debug)]
 pub enum AdoptRefused {
-    /// The config or the answer refused before a byte is written: `usage`.
+    /// The request, the answer or a path refused before a byte is written:
+    /// `usage`.
     Usage(String),
     /// The answer's certificate is not this connector's to adopt: `refused`,
     /// with the reason, and nothing written.
@@ -280,72 +432,69 @@ pub enum AdoptRefused {
     Fault(String),
 }
 
-/// `adopt`'s refusal: the answer's certificate is not over this key.
+/// `adopt`'s refusal: the answer's certificate is not over the request's
+/// key.
 pub const KEY_MISMATCH: &str = "key_mismatch";
 /// `adopt`'s refusal: the answer's certificate does not verify under the
 /// answer's authority.
 pub const NOT_SIGNED: &str = "not_signed";
 
-/// **`adopt`** (Spec 8.2): the config opened by the rule the connectors apply
-/// at their start, its key's prefix parsed, the answer's certificate for its
-/// plane checked against the key and the answer's authority, and the members
-/// `register` writes appended after the prefix.
-pub fn adopt(plane: Plane, config: &Path, answer: &Path) -> Result<AnswerFile, AdoptRefused> {
-    adopt_with(plane, config, answer, UnixTime::now(), &mut |_| Ok(()))
+/// What `adopt` is given (Spec 8.2): the request line `request` printed,
+/// the answer `pair` wrote, the key file the config names, and the config
+/// to write.
+pub struct Adopting<'a> {
+    pub plane: Plane,
+    pub request: &'a Path,
+    pub answer: &'a Path,
+    pub key_file: &'a Path,
+    pub out: &'a Path,
 }
 
-/// `adopt`, answering the answer it adopted, its certificate verified at
-/// `now`, the box's clock, with `at` called at each write boundary: an error
-/// from it ends the write there, as a crash would.
-pub fn adopt_with(
-    plane: Plane,
-    config: &Path,
-    answer: &Path,
-    now: UnixTime,
-    at: &mut dyn FnMut(Boundary) -> std::io::Result<()>,
-) -> Result<AnswerFile, AdoptRefused> {
+/// **`adopt`** (Spec 8.2; the brief of 2026-11-27, child 6): the answer's
+/// certificate for its plane checked against the request's public half and
+/// the answer's authority, then the config written new at `out`, naming
+/// `key_file`, which it never opens.
+pub fn adopt(a: &Adopting<'_>) -> Result<AnswerFile, AdoptRefused> {
+    adopt_at(a, UnixTime::now())
+}
+
+/// `adopt`, its certificate verified at `now`, the box's clock.
+pub fn adopt_at(a: &Adopting<'_>, now: UnixTime) -> Result<AnswerFile, AdoptRefused> {
     let usage = |e: anyhow::Error| AdoptRefused::Usage(format!("{e:#}"));
-    let fault = |what: &str, e: &dyn std::fmt::Display| {
-        AdoptRefused::Fault(format!("{what} {}: {e}", config.display()))
-    };
-    let mut file = open_private(config, true).map_err(usage)?;
-    let mut content = String::new();
-    (&mut file)
-        .take(CONFIG_BOUND + 1)
-        .read_to_string(&mut content)
-        .map_err(|e| AdoptRefused::Usage(format!("reading {}: {e}", config.display())))?;
-    if content.len() as u64 > CONFIG_BOUND {
+    let plane = a.plane;
+    if !a.key_file.is_absolute() {
         return Err(AdoptRefused::Usage(format!(
-            "{} passes {CONFIG_BOUND} bytes and is not a connector's config",
-            config.display()
+            "{}: key_file is not an absolute path",
+            a.key_file.display()
         )));
     }
-    let (key_pem, prefix) = prefix_of(plane, &content)
-        .map_err(|why| AdoptRefused::Usage(format!("{}: {why}", config.display())))?;
-    let answered = AnswerFile::read(answer).map_err(usage)?;
+    let request_pem = read_request_line(a.request).map_err(AdoptRefused::Usage)?;
+    let requested = request_key(&request_pem).ok_or_else(|| {
+        AdoptRefused::Usage(format!(
+            "{}: the request is not one P-256 certificate request",
+            a.request.display()
+        ))
+    })?;
+    let answered = AnswerFile::read(a.answer).map_err(usage)?;
     if answered.certificate(plane).is_none() {
         return Err(AdoptRefused::Usage(format!(
             "{}: the answer carries no certificate for the {} plane, which the pairing does not enroll",
-            answer.display(),
+            a.answer.display(),
             plane.as_str()
         )));
     }
-
-    // The answer's certificate for this plane is over this key, and verifies
-    // under the answer's authority as a client's.
     let (Some(authority), Some(certificate)) = (
         one_certificate(&answered.authority),
         answered.certificate(plane).and_then(one_certificate),
     ) else {
         return Err(AdoptRefused::Usage(format!(
             "{}: a certificate is not one PEM block",
-            answer.display()
+            a.answer.display()
         )));
     };
-    let key = signing_key(&key_pem)
-        .ok_or_else(|| AdoptRefused::Usage("the config's key does not load".into()))?;
-    let certified = rustls::sign::CertifiedKey::new(vec![certificate.clone()], key);
-    if certified.keys_match().is_err() {
+    // The answer's certificate for this plane is over the request's key,
+    // and verifies under the answer's authority as a client's.
+    if certificate_key(certificate.as_ref()) != Some(requested.as_slice()) {
         return Err(AdoptRefused::Refused(KEY_MISMATCH));
     }
     let mut roots = rustls::RootCertStore::empty();
@@ -357,7 +506,7 @@ pub fn adopt_with(
         crate::link::authority::provider(),
     )
     .build()
-    .map_err(|e| fault("building the verifier for", &e))?;
+    .map_err(|e| AdoptRefused::Fault(format!("building the verifier: {e}")))?;
     // **A box whose clock is outside the certificate's window is told so**,
     // rather than sent after a signature that holds: a certificate refused for
     // its time alone is verified again at the edge of its own window, and only
@@ -387,26 +536,41 @@ pub fn adopt_with(
         }
         Err(_) => return Err(AdoptRefused::Refused(NOT_SIGNED)),
     }
-
-    let tail = tail(plane, &answered);
-    at(Boundary::Opened).map_err(|e| fault("ended after opening", &e))?;
-    // **Only what follows the prefix is replaced**: a re-run's truncation
-    // stops at the prefix's end, and the write starts there.
-    file.set_len(prefix as u64)
-        .map_err(|e| fault("truncating the tail of", &e))?;
-    file.seek(SeekFrom::Start(prefix as u64))
-        .map_err(|e| fault("seeking in", &e))?;
-    let middle = tail
-        .find("-----BEGIN CERTIFICATE-----")
-        .map_or(tail.len() / 2, |at| at + 40);
-    file.write_all(&tail.as_bytes()[..middle])
-        .map_err(|e| fault("writing", &e))?;
-    at(Boundary::MidCertificate).map_err(|e| fault("ended mid-certificate in", &e))?;
-    file.write_all(&tail.as_bytes()[middle..])
-        .map_err(|e| fault("writing", &e))?;
-    at(Boundary::BeforeSync).map_err(|e| fault("ended before syncing", &e))?;
-    file.sync_all().map_err(|e| fault("syncing", &e))?;
+    write_config(a.out, &config_of(plane, &answered, a.key_file))?;
     Ok(answered)
+}
+
+/// **The config written new at `out`**, never through a link nor over an
+/// entry, synced with its directory; removed where a write after the create
+/// fails, so a re-run is not refused by a partial file. It holds
+/// certificates and paths alone, no secret.
+fn write_config(out: &Path, content: &str) -> Result<(), AdoptRefused> {
+    use std::os::unix::fs::PermissionsExt;
+    let fault = |what: &str, e: &dyn std::fmt::Display| {
+        AdoptRefused::Fault(format!("{what} {}: {e}", out.display()))
+    };
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(out)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => AdoptRefused::Usage(format!(
+                "{} exists: adopt writes the config into a new file",
+                out.display()
+            )),
+            _ => fault("creating", &e),
+        })?;
+    let written = file
+        .set_permissions(std::fs::Permissions::from_mode(0o644))
+        .and_then(|()| file.write_all(content.as_bytes()))
+        .and_then(|()| file.sync_all())
+        .and_then(|()| sync_parent(out));
+    written.map_err(|e| {
+        let _ = std::fs::remove_file(out);
+        fault("writing", &e)
+    })
 }
 
 /// **A certificate refused for its time**: the box's clock's fault where the
@@ -437,9 +601,9 @@ fn clock(
     ))
 }
 
-/// **What `adopt` appends**: the members `register` writes beside the key,
-/// so the connector's unit reads the config unchanged (Spec 8.1).
-fn tail(plane: Plane, answer: &AnswerFile) -> String {
+/// **The config `adopt` writes**: the members `register` writes, and
+/// `key_file`, so the connector's unit reads it unchanged (Spec 8.1).
+fn config_of(plane: Plane, answer: &AnswerFile, key_file: &Path) -> String {
     let mut table = toml::Table::new();
     table.insert("server".into(), answer.server.clone().into());
     table.insert("server_name".into(), answer.server_name.clone().into());
@@ -455,8 +619,13 @@ fn tail(plane: Plane, answer: &AnswerFile) -> String {
             .to_owned()
             .into(),
     );
+    table.insert(
+        "key_file".into(),
+        key_file.to_string_lossy().into_owned().into(),
+    );
     format!(
-        "# Completed by `{}-con adopt` from the pairing's answer.\n{}",
+        "# Written by `{}-con adopt` from the pairing's answer. Its key is the file key_file\n\
+         # names, which adopt never opened.\n{}",
         plane.as_str(),
         toml::to_string(&table).expect("a table of strings serializes")
     )

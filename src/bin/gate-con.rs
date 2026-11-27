@@ -35,11 +35,12 @@ struct Args {
 /// The enrollment's commands on the box (Spec 8.2).
 #[derive(clap::Subcommand)]
 enum Command {
-    /// Create the config holding this connector's new key alone, and print
-    /// its certificate request. No dial.
+    /// Create this connector's key file, its group the named one at mode
+    /// 0640, and print its certificate request. Run as root. No dial.
     Request(RequestArgs),
-    /// Complete the config from the pairing's answer, once its certificate
-    /// is over this connector's key and verifies under its authority.
+    /// Write the config from the pairing's answer, once its certificate is
+    /// over the request's key and verifies under its authority, naming the
+    /// key file, which it never opens. Run unprivileged.
     Adopt(AdoptArgs),
 }
 
@@ -48,15 +49,10 @@ async fn main() -> anyhow::Result<ExitCode> {
     let args: Args = parse_args("gate-con", &["request", "adopt"]);
     if let Some(command) = args.command {
         let status = match command {
-            Command::Request(a) => {
-                box_commands::request(&mut printer("gate-con request"), Plane::Gate, &a.config)
+            Command::Request(a) => box_commands::request(&mut printer("gate-con request"), &a),
+            Command::Adopt(a) => {
+                box_commands::adopt(&mut printer("gate-con adopt"), Plane::Gate, &a)
             }
-            Command::Adopt(a) => box_commands::adopt(
-                &mut printer("gate-con adopt"),
-                Plane::Gate,
-                &a.config,
-                &a.answer,
-            ),
         };
         return Ok(ExitCode::from(status.code() as u8));
     }

@@ -291,7 +291,27 @@ impl Rig {
         (id, Self::handles(&page))
     }
 
-    /// A config taken: its status, headers and body.
+    /// **A plane's config and key taken** (`plane` 0 the gate's, 1 the
+    /// admin's, as the page orders them), answered as one text holding the
+    /// key inline, which this test's `Connector` dials on; a connector's
+    /// own load refuses such a config.
+    pub(crate) async fn take_config(
+        &self,
+        handles: &[String],
+        plane: usize,
+        session: &str,
+    ) -> String {
+        let (status, _, config) = self.take(&handles[2 * plane], session).await;
+        assert_eq!(status, StatusCode::OK, "{config}");
+        let (status, _, key) = self.take(&handles[2 * plane + 1], session).await;
+        assert_eq!(status, StatusCode::OK, "{key}");
+        let mut table: toml::Table = config.parse().expect("a client config is TOML");
+        assert!(!table.contains_key("key"), "a config carries no key inline");
+        table.insert("key".into(), key.into());
+        toml::to_string(&table).unwrap()
+    }
+
+    /// A config or key taken: its status, headers and body.
     pub(crate) async fn take(
         &self,
         handle: &str,
@@ -473,25 +493,53 @@ async fn registering_hands_over_two_configs_each_taken_once_and_valid() {
     let s = rig.store();
     let (ada, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (id, handles) = rig.register(&session, "box-a", "karl").await;
-    assert_eq!(handles.len(), 2);
-    assert_eq!(rig.handover.held(), 2);
+    assert_eq!(handles.len(), 4, "two configs and two keys");
+    assert_eq!(rig.handover.held(), 4);
 
-    let (status, headers, gate_config) = rig.take(&handles[0], &session).await;
-    assert_eq!(status, StatusCode::OK, "{gate_config}");
-    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
-    assert_eq!(
-        headers[header::CONTENT_DISPOSITION],
-        "attachment; filename=\"box-a-karl-gate.toml\""
-    );
+    // **Each connector's key is a file of its own** (the brief of
+    // 2026-11-27, child 6): a config carries none, and its key is handed
+    // over beside it.
+    let mut taken = Vec::new();
+    for (handle, filename) in handles.iter().zip([
+        "box-a-karl-gate.toml",
+        "box-a-karl-gate.key",
+        "box-a-karl-admin.toml",
+        "box-a-karl-admin.key",
+    ]) {
+        let (status, headers, body) = rig.take(handle, &session).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+        assert_eq!(
+            headers[header::CONTENT_DISPOSITION],
+            format!("attachment; filename=\"{filename}\"").as_str()
+        );
+        if filename.ends_with(".toml") {
+            assert!(
+                !body.contains("PRIVATE KEY"),
+                "a config carries no key: {body}"
+            );
+            assert!(
+                body.contains("# key_file = "),
+                "key_file is the install's box fact: {body}"
+            );
+        } else {
+            assert!(
+                crate::link::key_config::one_key(&body),
+                "a key file is one key"
+            );
+        }
+        taken.push(body);
+    }
     let (status, _, _) = rig.take(&handles[0], &session).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "taken once");
-    let (status, headers, admin_config) = rig.take(&handles[1], &session).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        headers[header::CONTENT_DISPOSITION],
-        "attachment; filename=\"box-a-karl-admin.toml\""
-    );
-    assert_eq!(rig.handover.held(), 0, "both taken, none held");
+    assert_eq!(rig.handover.held(), 0, "all four taken, none held");
+    let inline = |config: &str, key: &str| {
+        let mut table: toml::Table = config.parse().unwrap();
+        table.insert("key".into(), key.into());
+        toml::to_string(&table).unwrap()
+    };
+    let gate_config = inline(&taken[0], &taken[1]);
+    let admin_config = inline(&taken[2], &taken[3]);
 
     let mut gate = Connector::dial(&gate_config).await;
     assert!(
@@ -637,7 +685,7 @@ async fn rotating_closes_the_old_and_admits_the_new() {
     let s = rig.store();
     let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (id, handles) = rig.register(&session, "box-a", "karl").await;
-    let (_, _, old_config) = rig.take(&handles[0], &session).await;
+    let old_config = rig.take_config(&handles, 0, &session).await;
     let mut old = Connector::dial(&old_config).await;
     assert!(matches!(
         old.recv().await,
@@ -665,8 +713,7 @@ async fn rotating_closes_the_old_and_admits_the_new() {
     );
 
     let handles = Rig::handles(&page);
-    let (status, _, new_config) = rig.take(&handles[0], &session).await;
-    assert_eq!(status, StatusCode::OK);
+    let new_config = rig.take_config(&handles, 0, &session).await;
     let mut new = Connector::dial(&new_config).await;
     assert!(
         matches!(new.recv().await, Some(ToClient::HelloAnswer { .. })),
@@ -704,7 +751,7 @@ async fn a_rotation_whose_commit_answers_past_its_bound_hands_its_pair_over() {
     let s = rig.store();
     let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (id, handles) = rig.register(&session, "box-a", "karl").await;
-    let (_, _, old_config) = rig.take(&handles[0], &session).await;
+    let old_config = rig.take_config(&handles, 0, &session).await;
     WRITE_BOUND_FOR_TEST.with(|b| b.set(Some(BOUND)));
 
     let held = hold::arm(Point::AdminWriteAnswered);
@@ -722,11 +769,14 @@ async fn a_rotation_whose_commit_answers_past_its_bound_hands_its_pair_over() {
     );
     drop(held);
     let handles = Rig::handles(&page);
-    assert_eq!(handles.len(), 2, "both configs are held: {page}");
+    assert_eq!(
+        handles.len(),
+        4,
+        "both configs and both keys are held: {page}"
+    );
     let mut configs = Vec::new();
-    for handle in &handles {
-        let (status, _, config) = rig.take(handle, &session).await;
-        assert_eq!(status, StatusCode::OK, "{config}");
+    for plane in 0..2 {
+        let config = rig.take_config(&handles, plane, &session).await;
         let table: toml::Table = config.parse().expect("a client config is TOML");
         configs.push((table["plane"].as_str().unwrap().to_owned(), config));
     }
@@ -779,7 +829,7 @@ async fn a_rotation_stalled_before_its_commit_is_not_made() {
     let s = rig.store();
     let (_, session) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (id, handles) = rig.register(&session, "box-a", "karl").await;
-    let (_, _, old_config) = rig.take(&handles[0], &session).await;
+    let old_config = rig.take_config(&handles, 0, &session).await;
     let gate_fingerprint = || async {
         sqlx::query_scalar::<_, String>("SELECT gate_fingerprint FROM agent WHERE agent_id = $1")
             .bind(&id)
@@ -1041,13 +1091,14 @@ async fn a_revocation_waits_for_the_register_it_would_have_refused() {
 }
 
 /// **The hand-over's bound counts the writes in flight**: with room for
-/// four configs, five admins register at once, each held after reserving
-/// at step three; two reserve their two slots and land, the other three are
+/// eight files, five admins register at once, each held after reserving
+/// at step three; two reserve their four slots (two configs, two keys) and
+/// land, the other three are
 /// refused before any record, and the configs held and reserved never pass
 /// the bound.
 #[tokio::test]
 async fn concurrent_registers_never_pass_the_hand_overs_bound() {
-    let Some(rig) = rig_with(Handover::with_cap(4)).await else {
+    let Some(rig) = rig_with(Handover::with_cap(8)).await else {
         return;
     };
     let s = rig.store();
@@ -1077,7 +1128,7 @@ async fn concurrent_registers_never_pass_the_hand_overs_bound() {
         }));
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(rig.handover.occupied() <= 4, "reserved within the bound");
+    assert!(rig.handover.occupied() <= 8, "reserved within the bound");
     for release in &releases {
         release.notify_one();
     }
@@ -1091,8 +1142,8 @@ async fn concurrent_registers_never_pass_the_hand_overs_bound() {
         .filter(|s| **s == StatusCode::SERVICE_UNAVAILABLE)
         .count();
     assert_eq!((landed, refused), (2, 3), "{answered:?}");
-    assert_eq!(rig.handover.held(), 4);
-    assert_eq!(rig.handover.occupied(), 4, "no slot left reserved");
+    assert_eq!(rig.handover.held(), 8);
+    assert_eq!(rig.handover.occupied(), 8, "no slot left reserved");
     assert_eq!(rows(s, "SELECT count(*) FROM agent").await, 2);
     assert_eq!(
         rows(s, "SELECT count(*) FROM audit").await,
@@ -1179,8 +1230,8 @@ async fn connected(
     r#box: &str,
 ) -> (String, Connector, Connector, String) {
     let (id, handles) = rig.register(session, r#box, "karl").await;
-    let (_, _, gate_config) = rig.take(&handles[0], session).await;
-    let (_, _, admin_config) = rig.take(&handles[1], session).await;
+    let gate_config = rig.take_config(&handles, 0, session).await;
+    let admin_config = rig.take_config(&handles, 1, session).await;
     let mut gate = Connector::dial(&gate_config).await;
     assert!(matches!(
         gate.recv().await,
@@ -1601,7 +1652,7 @@ async fn a_register_whose_commits_answer_is_lost_reads_back_its_outcome() {
     lose_the_commits_answer("register");
     let (id, handles) = rig.register(&session, "box-a", "karl").await;
     assert!(the_answer_was_lost());
-    assert_eq!(handles.len(), 2, "the configs handed over");
+    assert_eq!(handles.len(), 4, "the configs and keys handed over");
 
     lose_the_commits_answer("rotate");
     let (status, _, page) = rig
@@ -1609,7 +1660,7 @@ async fn a_register_whose_commits_answer_is_lost_reads_back_its_outcome() {
         .await;
     assert!(the_answer_was_lost());
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert_eq!(Rig::handles(&page).len(), 2);
+    assert_eq!(Rig::handles(&page).len(), 4);
     for action in ["register", "rotate"] {
         assert_eq!(
             rows(
@@ -1819,7 +1870,7 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
         while handover.held_for(minted_by) != n {
             assert!(
                 tokio::time::Instant::now() < until,
-                "{n} configs are not held for the minting session: {} are, of {}",
+                "{n} files are not held for the minting session: {} are, of {}",
                 handover.held_for(minted_by),
                 handover.held()
             );
@@ -1850,7 +1901,7 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
     )
     .await;
     assert_eq!(outcome_of(s, &ada, "register").await, "ok");
-    held(2).await;
+    held(4).await;
     let id: String = sqlx::query_scalar(
         "SELECT agent_id FROM agent WHERE box = 'box-a' AND name = 'karl' AND gate_state = 'live'",
     )
@@ -1873,7 +1924,7 @@ async fn each_write_to_the_register_dropped_at_its_first_record_still_lands() {
     )
     .await;
     assert_eq!(outcome_of(s, &ada, "rotate").await, "ok");
-    held(4).await;
+    held(8).await;
     let page = row(id.clone()).await;
     assert!(
         page.contains("<td>live</td>\n      <td>live</td>"),
@@ -2021,8 +2072,8 @@ async fn the_register_page_and_the_agent_page_say_how_many_doors() {
                 .unwrap()
                 .to_owned()
         };
-        let (_, _, gate) = rig.take(&handles[0], &session).await;
-        let (_, _, admin_config) = rig.take(&handles[1], &session).await;
+        let gate = rig.take_config(&handles, 0, &session).await;
+        let admin_config = rig.take_config(&handles, 1, &session).await;
         let management = rig.listener.address().to_string();
         let data = rig.listener.data_address().map(|d| d.to_string());
         assert_eq!(server_of(&admin_config), management);

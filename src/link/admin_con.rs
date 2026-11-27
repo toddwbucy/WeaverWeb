@@ -263,7 +263,7 @@ const MEMBERS: &[&str] = &[
     "plane",
     "server_certificate",
     "certificate",
-    "key",
+    "key_file",
     "local_address",
     "admin_socket",
     "backfill_bytes",
@@ -272,13 +272,25 @@ const MEMBERS: &[&str] = &[
 ];
 
 impl AdminConConfig {
-    /// Read the config under the trust rule of `client::read_private`, and
-    /// refuse one naming a retired member, one minted for the gate plane,
-    /// one missing a member, a backfill past `MAX_BACKFILL_BYTES`, or a box
-    /// fact that is not absolute: a box fact is never resolved against
-    /// admin-con's working directory.
+    /// Read the config and its key under the connector's trust rule
+    /// (`client::read_trusted`, `client::Trust::connector`): the config by
+    /// `load_unkeyed`, then the key from `key_file` once the config has
+    /// passed (`LinkConfig::load_key`).
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let content = client::read_private(path)?;
+        let trust = client::Trust::connector();
+        let mut cfg = Self::load_unkeyed(path, &trust)?;
+        cfg.link.load_key(path, &trust)?;
+        Ok(cfg)
+    }
+
+    /// **The config alone, its key not read**: under `trust`, refusing one
+    /// naming a retired member, one minted for the gate plane, one missing
+    /// a member, a backfill past `MAX_BACKFILL_BYTES`, or a box fact that is
+    /// not absolute: a box fact is never resolved against admin-con's
+    /// working directory. The staging tool checks a composed config by it,
+    /// whose key is not yet laid at `key_file`.
+    pub fn load_unkeyed(path: &Path, trust: &client::Trust) -> anyhow::Result<Self> {
+        let content = client::read_trusted(path, client::Held::Config, trust)?;
         if let Ok(table) = content.parse::<toml::Table>()
             && let Some((_, why)) = RETIRED
                 .iter()

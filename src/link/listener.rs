@@ -2713,7 +2713,7 @@ impl Answer {
     /// outside them. Exactly one of an outcome and a fault. An outcome
     /// names the verb asked and the connection's agent, and has the shape
     /// the box's invocation answers (`weaver-admin-operator-contract`,
-    /// built by `link::sudo_invoker`): exit 0 or 1 and one answer object,
+    /// carried by `link::service_invoker`): exit 0 or 1 and one answer object,
     /// with no raw output beside it, which is kept only where no object
     /// parsed. A fault's kind stays free on the wire; what it means is the
     /// audit's allow-list.
@@ -2752,17 +2752,19 @@ impl Answer {
     /// fault by the contract and writes no outcome, a shape the door
     /// refuses and kept here as defence. A fault writes `failed` only
     /// where its kind proves the verb never ran, by an allow-list: `busy`,
-    /// `not_started`, `outside_ceiling`. **Every other kind, known or not,
+    /// `not_started`, `outside_ceiling`, and `not_granted`, the service's
+    /// read of the grant at the verb. **Every other kind, known or not,
     /// writes no outcome** (`None`): `unknown` and `fault`, which leave the
     /// act unknown, `not_landed`, which is this server's own, and any kind
     /// a connector of another version invents. The first then stands
     /// alone, which is the audit's "unknown", as where the connection ends
     /// with the frame in flight.
     fn audited(&self) -> Option<bool> {
-        const NEVER_RAN: [&str; 3] = [
+        const NEVER_RAN: [&str; 4] = [
             VerbFault::BUSY,
             VerbFault::NOT_STARTED,
             VerbFault::OUTSIDE_CEILING,
+            VerbFault::NOT_GRANTED,
         ];
         match self {
             Answer::Outcome(outcome) => match outcome.exit_code {

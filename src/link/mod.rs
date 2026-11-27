@@ -39,7 +39,7 @@ pub mod register;
 pub mod relay;
 #[cfg(feature = "enrollment")]
 pub mod request;
-pub mod sudo_invoker;
+pub mod service_invoker;
 pub mod verbs;
 
 #[cfg(test)]
@@ -65,7 +65,7 @@ mod run_end_tests;
 #[cfg(test)]
 mod server_asks_tests;
 #[cfg(test)]
-mod sudo_invoker_tests;
+mod service_invoker_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

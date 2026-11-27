@@ -416,6 +416,8 @@ pub enum LineError {
     Io(String),
 }
 
+impl std::error::Error for LineError {}
+
 impl std::fmt::Display for LineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -499,6 +501,8 @@ pub enum OpenError {
     /// The connector's own opening line would pass its bound: never sent.
     TooLong,
 }
+
+impl std::error::Error for OpenError {}
 
 impl std::fmt::Display for OpenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

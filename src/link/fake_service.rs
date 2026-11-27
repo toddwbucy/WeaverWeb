@@ -11,8 +11,8 @@
 //!   and delay its answer;
 //! - answer the grants with a list, refuse them `grants_unread`, or stay
 //!   silent;
-//! - answer a verb with `started` and a scripted final line, answer `show`
-//!   from a state it holds (`in_transition` for a set count), refuse it with
+//! - answer a verb with `started` and a scripted final line, or from a state
+//!   it holds (a `show` `in_transition` for a set count), refuse it with
 //!   any word of section 8.4, end it as a `fault`, or hold its final line;
 //! - refuse `busy` by its machine A, and `not_granted` a verb that a grants
 //!   answer listed;
@@ -20,8 +20,8 @@
 //!   run unstarted, and answer a later `run` with it standing or ended;
 //! - forget its runs as a restart does, drawing a new `instance`, while a
 //!   scripted run goes on;
-//! - run a hook as a verb starts, which writes the trace file, and record
-//!   each verb it ran with its principal;
+//! - run a hook before it takes its state and one after, which write the
+//!   trace file, and record each verb it ran with its principal;
 //! - on a trace connection, refuse `relay_unreachable`, splice to the relay,
 //!   close before the header as a relay that died (refusing the next opening
 //!   `relay_unreachable`) or as one whose window passed (admitting the next);
@@ -59,6 +59,10 @@ pub(crate) enum Grants {
 
 /// What a scripted verb comes to.
 pub(crate) enum Act {
+    /// Exit 0 with the state the fake holds, taken as the root program
+    /// starts: `{"kind":"state",...}`, or for a `show` `in_transition`
+    /// while its count lasts. What an unscripted verb answers.
+    State,
     /// Exit 0 or 1 with one object: `ran`.
     Answer {
         exit_code: i32,
@@ -90,11 +94,18 @@ pub(crate) enum Cut {
 
 /// **One scripted invocation**, taken by the next verb ask it matches.
 pub(crate) struct Script {
-    /// The verb it answers; `None` answers any verb but `show`.
+    /// The verb it answers; `None` answers any verb.
     pub(crate) verb: Option<String>,
     pub(crate) act: Act,
-    /// Run as the root program starts: a test writes the trace file here.
-    pub(crate) hook: Option<Box<dyn FnOnce() + Send>>,
+    /// Run as the root program starts, before the fake takes its state: a
+    /// test writes the trace file here, as admin writes it just ahead.
+    pub(crate) before: Option<Box<dyn FnOnce() + Send>>,
+    /// Run once the state is taken, as admin writes while the verb runs.
+    pub(crate) after: Option<Box<dyn FnOnce() + Send>>,
+    /// The state the fake holds from then on.
+    pub(crate) then_state: Option<String>,
+    /// How long the root program runs before its final line.
+    pub(crate) delay: Duration,
     /// Held after the run stands and before its root program starts, until
     /// notified: `started_ms` is null meanwhile.
     pub(crate) hold_start: Option<Arc<Notify>>,
@@ -121,7 +132,10 @@ impl Script {
         Self {
             verb: verb.map(str::to_owned),
             act,
-            hook: None,
+            before: None,
+            after: None,
+            then_state: None,
+            delay: Duration::ZERO,
             hold_start: None,
             release: None,
             cut: Cut::Never,
@@ -159,6 +173,10 @@ pub(crate) struct State {
     /// How many `show` runs answer `in_transition` before one answers the
     /// state.
     pub(crate) in_transition: usize,
+    /// A delay added to every run of one verb, whatever its order.
+    pub(crate) slow: Option<(String, Duration)>,
+    /// A verb whose every run ends as a `fault`, no script taken.
+    pub(crate) fails: Option<String>,
     /// The runs machine A holds, a `show` never among them.
     held: Vec<Standing>,
     ended: Option<Final>,
@@ -222,6 +240,8 @@ impl FakeService {
             scripts: VecDeque::new(),
             show_state: state.to_owned(),
             in_transition: 0,
+            slow: None,
+            fails: None,
             held: Vec::new(),
             ended: None,
             ran: Vec::new(),
@@ -662,9 +682,10 @@ async fn control(
     }
 }
 
-/// The answer `show` gives from the state the fake holds.
-fn show_answer(s: &mut State) -> serde_json::Value {
-    if s.in_transition > 0 {
+/// The answer a verb gives from the state the fake holds, a `show` taking
+/// one of its `in_transition` count.
+fn state_answer(s: &mut State, show: bool) -> serde_json::Value {
+    if show && s.in_transition > 0 {
         s.in_transition -= 1;
         return serde_json::json!({"kind": "in_transition", "constituents": [4100]});
     }
@@ -697,26 +718,16 @@ async fn run_verb(
     // The script it takes, the grant's read and machine A, under one lock.
     let admitted = {
         let mut s = state.lock().unwrap();
-        let at = s.scripts.iter().position(|script| match &script.verb {
-            Some(v) => *v == verb,
-            None => !show,
-        });
-        let script = at.and_then(|at| s.scripts.remove(at));
-        let script = script.unwrap_or_else(|| {
-            if show {
-                Script::of(
-                    Some("show"),
-                    Act::Answer {
-                        exit_code: 0,
-                        answer: serde_json::Value::Null,
-                        stderr: String::new(),
-                        stderr_cut: false,
-                    },
-                )
-            } else {
-                Script::answer(None, serde_json::json!({"kind": "answered", "verb": verb}))
-            }
-        });
+        let script = if s.fails.as_deref() == Some(verb.as_str()) {
+            Script::of(None, Act::Fault(format!("{verb} faulted")))
+        } else {
+            let at = s.scripts.iter().position(|script| match &script.verb {
+                Some(v) => *v == verb,
+                None => true,
+            });
+            at.and_then(|at| s.scripts.remove(at))
+                .unwrap_or_else(|| Script::of(None, Act::State))
+        };
         // **The grant is read first** (section 8.4): a scripted
         // `grant_unread` is that read failing; `not_granted` whatever
         // stands; any other scripted refusal only for a granted verb.
@@ -772,7 +783,10 @@ async fn run_verb(
     };
     let Script {
         act,
-        hook,
+        before,
+        after,
+        then_state,
+        delay,
         hold_start,
         release,
         cut,
@@ -802,8 +816,15 @@ async fn run_verb(
         s.ran.push((verb.clone(), principal));
         s.runs.push(format!("start {verb}"));
     }
-    if let Some(hook) = hook {
+    if let Some(hook) = before {
         hook();
+    }
+    let snapshot = state_answer(&mut state.lock().unwrap(), show);
+    if let Some(hook) = after {
+        hook();
+    }
+    if let Some(then) = then_state {
+        state.lock().unwrap().show_state = then;
     }
     if cut == Cut::BeforeStarted {
         close(writer).await;
@@ -816,12 +837,25 @@ async fn run_verb(
     if cut == Cut::WhileRunning {
         close(writer).await;
     }
+    let slow = state.lock().unwrap().slow.clone();
+    let slow = slow
+        .filter(|(v, _)| *v == verb)
+        .map_or(Duration::ZERO, |(_, d)| d);
+    tokio::time::sleep(delay + slow).await;
     if let Some(gate) = release {
         gate.notified().await;
     }
     let final_line = {
         let mut s = state.lock().unwrap();
         let last = match act {
+            Act::State => Final::Ran(Ran {
+                run: run.clone(),
+                verb: verb.clone(),
+                exit_code: 0,
+                answer: snapshot,
+                stderr: String::new(),
+                stderr_cut: false,
+            }),
             Act::Answer {
                 exit_code,
                 answer,
@@ -831,7 +865,7 @@ async fn run_verb(
                 run: run.clone(),
                 verb: verb.clone(),
                 exit_code,
-                answer: if show { show_answer(&mut s) } else { answer },
+                answer,
                 stderr,
                 stderr_cut,
             }),

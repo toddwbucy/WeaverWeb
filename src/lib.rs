@@ -4,8 +4,9 @@
 //! section 8. The connectors, gate-con and admin-con, are this crate's
 //! binaries beside the agent: gate-con (`link::gate_con`, relaying through
 //! `adapters/gate.rs`) and admin-con (`link::admin_con`, reading the trace
-//! through its relay, `link::relay`, and answering verbs through the sudo
-//! invoker, `link::sudo_invoker`, Spec 7.2).
+//! through its relay, `link::relay`, and answering verbs by asking the
+//! weaver-admin service on the box's local socket, `link::service_invoker`,
+//! Spec 7.2).
 
 pub mod adapters;
 #[cfg(all(test, feature = "passkeys"))]

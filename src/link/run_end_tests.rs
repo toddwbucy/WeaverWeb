@@ -17,7 +17,7 @@
 //! showed the test failing with the guard removed, per Spec section 9.
 
 use super::admin_con_tests::{
-    FakeInvoker, Running, Step, Trace, config, installed, ns, record, verb, window,
+    Running, Service, Step, Trace, config, installed, ns, record, verb, window,
 };
 use super::tests::{Lab, SOON};
 use crate::store::AgentId;
@@ -36,7 +36,7 @@ struct Run {
     lab: Lab,
     trace: Trace,
     id: AgentId,
-    invoker: Arc<FakeInvoker>,
+    invoker: Arc<Service>,
     con: Running,
     _out: tempfile::TempDir,
 }
@@ -46,7 +46,7 @@ async fn running(grants: &[&str]) -> Option<Run> {
     let trace = Trace::new();
     let out = crate::test_dir::tempdir().unwrap();
     let (id, path) = installed(&lab, &trace.socket, out.path(), None).await;
-    let invoker = FakeInvoker::new(grants, "idle");
+    let invoker = Service::new(grants, "idle");
     let mut cfg = config(&path);
     // A held relay sends no heartbeat, so a verb's drain would wait its
     // whole bound before the invocation.

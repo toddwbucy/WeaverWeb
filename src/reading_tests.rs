@@ -843,9 +843,9 @@ async fn an_unrecovered_call_passes_the_relay_the_window_and_the_live_view() {
         .unwrap();
     write!(
         file,
-        "{config}\ntrace_socket = {}\nweaver_admin = {}\nadmin_log = {}\n",
+        "{config}\ntrace_socket = {}\nadmin_socket = {}\nadmin_log = {}\n",
         toml::Value::String(relay.socket.display().to_string()),
-        toml::Value::String("/nonexistent/weaver-admin".to_owned()),
+        toml::Value::String("/nonexistent/admin.sock".to_owned()),
         toml::Value::String(admin_log.display().to_string()),
     )
     .unwrap();

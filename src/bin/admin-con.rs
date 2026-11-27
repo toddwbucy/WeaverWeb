@@ -36,7 +36,7 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
     /// Path to admin-con's TOML config: the file `weaver-web register`
-    /// wrote, or `adopt` completed, with `trace_socket`, `weaver_admin` and
+    /// wrote, or `adopt` completed, with `trace_socket`, `admin_socket` and
     /// `admin_log` added once an agent is laid (Spec 7.2).
     #[arg(long, required = true)]
     config: Option<PathBuf>,
@@ -107,10 +107,10 @@ async fn main() -> anyhow::Result<ExitCode> {
     // three or none, pick the invoker in `admin_con::run_as_configured` and this line.
     match cfg.laid() {
         Some(laid) => tracing::info!(
-            "admin-con for {} reading its trace through the relay, server {}, verbs through its invoker of {}",
+            "admin-con for {} reading its trace through the relay, server {}, verbs asked of the service at {}",
             cfg.link.agent,
             cfg.link.server,
-            laid.weaver_admin.display()
+            laid.admin_socket.display()
         ),
         None => tracing::info!(
             "admin-con for {}, server {}: no agent is laid, so no relay is dialed and no verb is invoked",

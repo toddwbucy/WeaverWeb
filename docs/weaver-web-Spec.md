@@ -5452,6 +5452,38 @@ admin-con's own signals never reach it. The seed's `lifecycle.rs`,
 which ran the verbs through an unscoped sudo, left the tree with the act
 that built admin-con.
 
+**The service's socket has its client, ahead of admin-con's move onto it**
+(`act/the-connectors-side-of-the-socket`, child 2, 2026-11-27), per
+`weaver-admin-operator-contract` section 8 at WeaverAgent `265a332d`. On the
+operator's rulings of 2026-11-26 the sudo rule moves to the weaver-admin
+service's account, and admin-con asks that service for the grants, a verb,
+the trace and the admin log's lines on the box's local socket. Until the
+stack's third child, admin-con still runs the sudo invoker described here.
+The client is `src/link/admin_service.rs`. Each connection opens with one
+line naming the contract's version 1, its purpose and the configured agent,
+and the service answers `open` with its `instance`, or one `refused` line
+naming one of the contract's eighteen words. **Every line is read within its
+bound and never past it**: the opening's answer at 4096 bytes with its
+newline, within 11 seconds (the service's 10 and one more); a control line
+at 256 KiB, the contract's own bound; a log line at 64 KiB, this crate's
+bound over the contract's 8 KiB line escaped. A line past its bound, one cut
+before its newline, or one that does not parse is the service's malformed
+answer, never read further, and the connector's own lines are checked
+against their 4096 bytes before a byte is sent. The client's tests run
+against a fake service written from the contract's section 8.10
+(`src/link/fake_service.rs`), which reaches no agent and no privileged
+program, per section 9.
+
+```graph
+node: web-the-service-socket-bounds-every-line
+kind: assertion
+tag: perturbation
+
+edge: asserts
+from: weaver-web
+to: web-the-service-socket-bounds-every-line
+```
+
 **The ceiling comes from the box's sudo rules, and a verb is asked whenever
 the ceiling grants it.** admin-con asks sudo, for each verb it knows,
 whether that exact line is granted without running it (`sudo -n -l` on the
@@ -8097,6 +8129,7 @@ two connectors report.
 | the data door never serves the pairing protocol (section 8) | perturbation in `src/link/pairing_tests.rs`, `the_data_door_never_serves_the_pairing_protocol`: serve the pairing at every door, and a box dialing the data door waits there (measured 2026-11-25) |
 | a connector dials from its `local_address` where one is named (section 8) | perturbation in `src/link/client_tests.rs`, `a_connector_dials_from_its_local_address`: drop the bind, and the server sees the connection from `127.0.0.1` (measured 2026-11-25) |
 | `gate_listen` and `gate_address` parse, default absent, and `gate_address` without `gate_listen` is refused at load; gate-con's config carries the data door's address (section 8) | `src/config.rs`'s tests, `the_data_door_is_optional_and_its_address_needs_it`; perturbation in `src/agents_tests.rs`, `the_register_page_and_the_agent_page_say_how_many_doors`: write the management door's address into gate-con's config, and the two-door case fails (measured 2026-11-25) |
+| every line on the weaver-admin service's socket is read within its bound and never past it: the opening's answer at 4096 bytes within 11 seconds, a control line at 256 KiB, a log line at 64 KiB, and the connector's own lines at 4096 bytes before a byte is sent (section 7.2) | tests in `src/link/admin_service_tests.rs` against the fake service of `src/link/fake_service.rs`, among them every opening word at each purpose it answers; perturbation, `an_answer_past_its_bound_is_malformed`: read the opening's answer at `usize::MAX` in place of `OPENING_BOUND`, and the client answers `Open` on a padded answer past 4096 bytes (measured 2026-11-27) |
 | admin-con holds its connection with no box fact: the door closed for the reason that no agent is laid, an empty ceiling with no `sudo` run, and no entry raised (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, against the real listener on a row whose gate is not enrolled, run as the binary runs it, `admin_con_with_no_box_fact_is_admitted_with_the_door_closed_and_no_alert`: read an absent `admin_log` as a failure, and an alert stands; choose the sudo invoker with no agent laid, and admin-con is never admitted (each measured 2026-11-25) |
 | admin-con's three box facts stand together, one fact chooses the invoker, and the door with no agent laid is closed for that reason (section 7.2) | perturbation in `src/link/admin_con_tests.rs`, `the_box_facts_stand_together_and_one_fact_chooses_the_invoker`: drop the refusal of some and not all, and the half-laid config loads; drop the empty path's branch in `dial_relay`, and the door answers the relay's dial error (each measured 2026-11-25) |
 | an admission on a plane a pairing set to not enrolled is refused `not_live`, never as a store failure (section 8) | perturbation in `src/link/tests.rs`, `an_admission_on_a_plane_set_to_none_is_refused_not_live`: read the fingerprint as a string, and the admission fails decoding (measured 2026-11-25) |

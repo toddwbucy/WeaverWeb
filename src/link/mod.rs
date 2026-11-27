@@ -20,6 +20,7 @@
 
 pub mod admin_con;
 pub mod admin_log;
+pub mod admin_service;
 pub mod authority;
 pub mod box_commands;
 pub mod box_line;
@@ -43,6 +44,8 @@ pub mod verbs;
 
 #[cfg(test)]
 mod admin_con_tests;
+#[cfg(test)]
+mod admin_service_tests;
 #[cfg(all(test, feature = "passkeys"))]
 mod admission_tests;
 #[cfg(test)]
@@ -51,6 +54,8 @@ mod client_tests;
 mod deadline_tests;
 #[cfg(test)]
 pub(crate) mod fake_relay;
+#[cfg(test)]
+pub(crate) mod fake_service;
 #[cfg(test)]
 mod key_config_tests;
 #[cfg(test)]

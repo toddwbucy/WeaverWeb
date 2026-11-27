@@ -1,32 +1,27 @@
 //! conforms: web-no-page-judges-the-models-disks-margin
 //!
-//! **The panes a box's report feeds** (Spec 6.2): the pairing stage's report
-//! and the directories page's directories as mounted, each a report as the
-//! source reads it (`crate::box_report`), and the status each carries:
-//! read, refused, misfiled or waiting. A refused report is drawn by its
+//! **The panes a box's report feeds** (Spec 6.2): the report on the Pair
+//! page and the directories page's directories as mounted, each the report
+//! as the source reads it (`crate::box_report`), and the status each
+//! carries: read, refused or waiting. A refused report is drawn by its
 //! arrival and its cause, by number and in the format's words, and never by
 //! its text or the refusal's detail, which is the console's log's (Spec
 //! 8.3). Every value is drawn through the templates' escaping.
 
-use crate::box_report::{Report, STATE_DRIVE_FLOOR, gib, role_name, stage_name};
+use crate::box_report::{Report, STATE_DRIVE_FLOOR, gib, role_name};
 use crate::survey::{Mount, Role, Survey};
 
 use super::when;
 
-/// **A stage's report as a pane draws it**: its status, and in that status
-/// what it shows.
+/// **The report as a pane draws it**: its status, and in that status what
+/// it shows.
 pub(crate) enum Shown<T> {
-    /// No report has arrived at the stage.
+    /// No report has arrived.
     Waiting,
     Refused {
         arrived: String,
         number: u8,
         words: &'static str,
-    },
-    /// Kept under the stage, and naming the other.
-    Misfiled {
-        arrived: String,
-        names: &'static str,
     },
     Read {
         arrived: String,
@@ -47,10 +42,6 @@ impl<T> Shown<T> {
                 number: refused.cause.number(),
                 words: refused.cause.words(),
             },
-            Report::Misfiled { arrived_at, names } => Shown::Misfiled {
-                arrived: when(*arrived_at),
-                names: stage_name(*names),
-            },
             Report::Read { arrived_at, survey } => Shown::Read {
                 arrived: when(*arrived_at),
                 body: body(survey),
@@ -59,11 +50,11 @@ impl<T> Shown<T> {
     }
 
     /// The class of the pane's status mark: `ok` read, `hold` waiting, and
-    /// `fail` refused or misfiled.
+    /// `fail` refused.
     pub(crate) fn class(&self) -> &'static str {
         match self {
             Shown::Waiting => "hold",
-            Shown::Refused { .. } | Shown::Misfiled { .. } => "fail",
+            Shown::Refused { .. } => "fail",
             Shown::Read { .. } => "ok",
         }
     }
@@ -73,14 +64,14 @@ impl<T> Shown<T> {
         match self {
             Shown::Waiting => "waiting",
             Shown::Refused { .. } => "refused",
-            Shown::Misfiled { .. } => "misfiled",
             Shown::Read { .. } => "read",
         }
     }
 }
 
-/// **The pairing stage's report, read** (Spec 6.2): its `taken`, then its
-/// members grouped, the CPU's flags as a count with the list folded.
+/// **The report, read** (Spec 6.2): its `taken`, what a blank appliance
+/// lacks, then its members grouped, the CPU's flags as a count with the
+/// list folded, and the network.
 pub(crate) struct PairingBody {
     pub(crate) taken: String,
     pub(crate) image_version: String,
@@ -101,6 +92,47 @@ pub(crate) struct PairingBody {
     pub(crate) driver_loaded: bool,
     pub(crate) cuda_runtime_version: String,
     pub(crate) cards: Vec<CardRow>,
+    pub(crate) network: NetworkRows,
+    pub(crate) lacks: Option<Lacks>,
+}
+
+/// **The network as the report gives it** (the brief of 2026-11-25): each
+/// plane's address in the report's one spelling and its prefix length, and
+/// whether the planes are separate or shared. Read only, judging nothing.
+pub(crate) struct NetworkRows {
+    pub(crate) management: String,
+    pub(crate) management_prefix: u8,
+    pub(crate) data: String,
+    pub(crate) data_prefix: u8,
+    pub(crate) planes: &'static str,
+}
+
+/// **What a blank appliance lacks** (the brief of 2026-11-25: "A blank
+/// appliance pairs"): the drives the report gives not mounted, each by the
+/// place the report names, one sentence per case.
+pub(crate) enum Lacks {
+    State(String),
+    Models(String),
+    Both { state: String, models: String },
+}
+
+impl Lacks {
+    /// The drives `survey` reports not mounted, or none.
+    fn of(survey: &Survey) -> Option<Lacks> {
+        let not_mounted = |role: Role| {
+            survey
+                .drives
+                .iter()
+                .find(|d| d.role == role && d.mount == Mount::NotMounted)
+                .map(|d| d.mount_point.clone())
+        };
+        match (not_mounted(Role::State), not_mounted(Role::Models)) {
+            (None, None) => None,
+            (Some(state), None) => Some(Lacks::State(state)),
+            (None, Some(models)) => Some(Lacks::Models(models)),
+            (Some(state), Some(models)) => Some(Lacks::Both { state, models }),
+        }
+    }
 }
 
 /// A card by its ordinal, model, PCI address and memory.
@@ -145,11 +177,19 @@ impl PairingBody {
                     memory: gib(card.memory_bytes),
                 })
                 .collect(),
+            network: NetworkRows {
+                management: survey.network.management.address.to_string(),
+                management_prefix: survey.network.management.prefix_length,
+                data: survey.network.data.address.to_string(),
+                data_prefix: survey.network.data.prefix_length,
+                planes: survey.network.planes.word(),
+            },
+            lacks: Lacks::of(survey),
         }
     }
 }
 
-/// **The latest report of either stage, read** (Spec 6.2): its `taken` and
+/// **The report, read** (Spec 6.2): its `taken` and
 /// each directory as mounted, with its judgments.
 pub(crate) struct DrivesBody {
     pub(crate) taken: String,

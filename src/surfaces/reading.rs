@@ -185,8 +185,10 @@ pub fn routes(seams: Seams) -> Router<Store> {
         seams.clone(),
     );
     let choose_seams = seams.clone();
+    let loop_seams = seams.clone();
     let (banner_seams, planes_seams, run_seams) = (seams.clone(), seams.clone(), seams);
     Router::new()
+        .merge(super::loop_page::routes(loop_seams))
         .route(
             "/agents",
             get(move |State(store): State<Store>, headers: HeaderMap| {
@@ -315,7 +317,7 @@ pub(super) async fn session_of(
 /// **An agent the session's person may read**: the identity parsed, the
 /// session standing, and a grant held on it; otherwise the same answer as
 /// for an agent that does not exist.
-async fn readable(
+pub(super) async fn readable(
     store: &Store,
     policy: &Policy,
     headers: &HeaderMap,
@@ -530,7 +532,7 @@ struct RunView {
 /// **The verbs admin-con's live connection declares it may run**: the
 /// ceiling's copy on the row while the admin plane is connected, none
 /// otherwise.
-fn live_ceiling(row: &Agent) -> Vec<String> {
+pub(super) fn live_ceiling(row: &Agent) -> Vec<String> {
     row.ceiling
         .as_ref()
         .filter(|_| row.admin.connected)
@@ -930,7 +932,7 @@ struct PromptView {
     options: Vec<(&'static str, &'static str)>,
 }
 
-fn when(at: chrono::DateTime<chrono::Utc>) -> String {
+pub(super) fn when(at: chrono::DateTime<chrono::Utc>) -> String {
     at.format("%Y-%m-%d %H:%M:%S UTC").to_string()
 }
 

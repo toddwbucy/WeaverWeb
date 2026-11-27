@@ -4,30 +4,28 @@
     rulings of 2026-11-23: "The declaration starts at directories, not
     drives", and the operator lays the disks before pairing): the two
     directories as the appliance lays them, the directories as mounted from
-    the latest report of either stage with their judgments, the host's form
+    the report with their judgments, the host's form
     drawn unbuilt, and the SSH keys that go down by their fingerprints. The
     pairing stage's report is shown on the agent's Pair page (the operator's
     ruling of 2026-11-24). Weaver Web lists and formats no disk. -#}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>The two directories</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">what the operator lays before pairing</span></header>
   <div class="body">
-  <p>The operator lays the disks before pairing, and the appliance's setup script walks through it: a state disk and a models disk, each mounted at its default path. Weaver Web lists and formats no disk.</p>
+  <p>The operator lays the disks before pairing, and the appliance's setup script walks through it: a state disk and a models disk, each mounted at a place the operator chooses. Weaver Web lists and formats no disk.</p>
   <p>The state directory holds each agent's directory of its own, named for the agent, with the agent's folder and its home side by side inside it. The models directory holds the models in Hugging Face's layout.</p>
   </div>
-  <footer>The box reports the two directories at their default paths, and the next pane judges them.</footer>
+  <footer>The box reports each directory at the place the operator chose, and the next pane names and judges them.</footer>
 </section>
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The directories as mounted</h2><span class="backing built">built</span><span class="status {{ directories.class() }}">{{ directories.word() }}</span><span class="source">the box's latest survey, of either stage</span></header>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The directories as mounted</h2><span class="backing built">built</span><span class="status {{ directories.class() }}">{{ directories.word() }}</span><span class="source">the box's survey</span></header>
   <div class="body">
   {%- match directories %}
   {%- when report::Shown::Waiting %}
-  <p>No report has arrived at either stage.</p>
+  <p>No report has arrived.</p>
   {%- when report::Shown::Refused with { arrived, number, words } %}
-  <p>The {{ stage }} stage's report, arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
-  {%- when report::Shown::Misfiled with { arrived, names } %}
-  <p>Arrived {{ arrived }}. The report kept as the {{ stage }} stage's names its stage {{ names }}.</p>
+  <p>The report, arrived {{ arrived }}. Refused for cause {{ number }}: {{ words }}.</p>
   {%- when report::Shown::Read with { arrived, body } %}
-  <p>The {{ stage }} stage's report, arrived {{ arrived }}, taken {{ body.taken }}.</p>
+  <p>The report, arrived {{ arrived }}, taken {{ body.taken }}.</p>
   <table>
     <thead><tr><th>Role</th><th>Directory</th><th>Label</th><th>Filesystem</th><th>Size</th><th>Free</th><th>Project quota</th><th>Judgment</th></tr></thead>
     <tbody>
@@ -40,13 +38,11 @@
   </div>
   {%- match directories %}
   {%- when report::Shown::Waiting %}
-  <footer>Waits on the box's report at either stage.</footer>
+  <footer>Waits on the box's report.</footer>
   {%- when report::Shown::Refused with { arrived: _, number: _, words: _ } %}
   <footer>Confirm holds, naming the refusal. Neither the report's text nor the refusal's detail is drawn, the detail being in the console's log.</footer>
-  {%- when report::Shown::Misfiled with { arrived: _, names: _ } %}
-  <footer>Confirm holds, naming the stage the report names.</footer>
   {%- when report::Shown::Read with { arrived: _, body: _ } %}
-  <footer>Read from the latest report of either stage. A directory not mounted, or a state directory under 9 GiB of filesystem, holds Confirm. A models directory whose free space is short of the picks' need is a warning, since the box's pull is an act of its own.</footer>
+  <footer>Read from the report. A directory not mounted, or a state directory under 9 GiB of filesystem, holds Confirm. A models directory whose free space is short of the picks' need is a warning, since the box's pull is an act of its own.</footer>
   {%- endmatch %}
 </section>
 <section class="pane">

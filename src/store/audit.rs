@@ -133,6 +133,9 @@ pub enum Target<'a> {
     /// An operator's SSH public key, by its own identity (`sk-`), for its
     /// add and its removal (Spec 6.2).
     SshKey(&'a str),
+    /// A version of an agent's loop, by its own identity (`lp-`), for its
+    /// save (Spec 6.3).
+    Loop(&'a str),
 }
 
 impl Target<'_> {
@@ -150,6 +153,7 @@ impl Target<'_> {
             Target::ModelPull(_) => "model_pull",
             Target::Setup(_) => "setup",
             Target::SshKey(_) => "ssh_key",
+            Target::Loop(_) => "loop",
         }
     }
 
@@ -165,7 +169,8 @@ impl Target<'_> {
             | Target::Declaration(id)
             | Target::ModelPull(id)
             | Target::Setup(id)
-            | Target::SshKey(id) => Some(id),
+            | Target::SshKey(id)
+            | Target::Loop(id) => Some(id),
         }
     }
 }

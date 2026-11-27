@@ -10,7 +10,10 @@
 //!
 //! **The waiting box is held in this process's memory alone.** Nothing
 //! reaches the store before a code matches: no row, no audit record and no
-//! log line per connection. At most `Bounds::total` connections wait and
+//! log line per connection. The first frame's report is read for its
+//! `format` alone (`survey::format_taken`), and a report that does not read
+//! as `weaver-survey/2` is refused `format_refused` before the box is
+//! listed. At most `Bounds::total` connections wait and
 //! `Bounds::per_peer` from one peer address, and one past either is refused
 //! `busy`. The first frame arrives within `Bounds::first_frame` and holds at
 //! most `PAIR_FIRST_FRAME_BOUND`. A heartbeat goes at the link's cadence
@@ -649,6 +652,21 @@ pub(crate) async fn serve(start: StartHandshake<TcpStream>, mut cx: Context<'_>)
     if let Some(reason) = crate::link::frames::reports_refused(&reports) {
         let refused = PairToBox::Refused {
             reason: reason.to_owned(),
+        };
+        close_with(&mut reader, &refused, cx.write_bound).await;
+        return;
+    }
+    // **The report's version is read before the box is listed** (Spec 8.2):
+    // its `format` alone, so a box built to another version hears
+    // `format_refused` at once and is never listed. Nothing else of the
+    // report is judged here, no detail is built, and nothing is logged, as
+    // for every refusal before a code matches: the box hears the word alone.
+    if reports
+        .iter()
+        .any(|r| !crate::survey::format_taken(r.report.as_bytes()))
+    {
+        let refused = PairToBox::Refused {
+            reason: crate::link::frames::pair_reason::FORMAT_REFUSED.to_owned(),
         };
         close_with(&mut reader, &refused, cx.write_bound).await;
         return;

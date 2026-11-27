@@ -348,45 +348,39 @@ struct ModelsPage {
     no_pick: Option<String>,
     pulls: PullsView,
     /// **The models directory's need** (Spec 6.2), where a model is picked,
-    /// and the models directory as the latest report of either stage shows
-    /// it, judged against the need.
+    /// and the models directory as the report shows it, judged against the
+    /// need.
     need: Option<super::Need>,
-    /// The models directory, or why none is judged: which of no report, the
-    /// latest refused or misfiled, or a latest naming none.
+    /// The models directory, or why none is judged: no report, or the
+    /// report refused.
     models_directory: Result<super::report::DriveRow, String>,
 }
 
-/// The models directory as `reports`' latest shows it, judged against
-/// `need`, where that report reads and names one, else why none is.
+/// The models directory as the report shows it, judged against `need`,
+/// where the report reads, else why none is.
 fn models_directory(
     reports: &crate::box_report::Reports,
     need: Option<&super::Need>,
 ) -> Result<super::report::DriveRow, String> {
-    use crate::box_report::{Report, stage_name};
-    let (stage, latest) = reports.latest();
-    let stage = stage_name(stage);
-    let why = match latest {
-        Report::Waiting => "No report has arrived at either stage".to_owned(),
+    use crate::box_report::Report;
+    let why = match &reports.report {
+        Report::Waiting => "No report has arrived".to_owned(),
         Report::Refused { refused, .. } => format!(
-            "The {stage} stage's report, the latest, is refused for cause {}: {}",
+            "The report is refused for cause {}: {}",
             refused.cause.number(),
             refused.cause.words()
         ),
-        Report::Misfiled { names, .. } => format!(
-            "The report kept as the {stage} stage's, the latest, names its stage {}",
-            stage_name(*names)
-        ),
         Report::Read { .. } => {
-            if let super::report::Shown::Read { body, .. } = super::directories(reports, need).0
+            if let super::report::Shown::Read { body, .. } = super::directories(reports, need)
                 && let Some(row) = body.drives.into_iter().find(|d| d.role == "models")
             {
                 return Ok(row);
             }
             // Unreachable: the survey's reader refuses a report whose
-            // drives are not state then models at their mount points
-            // (`survey::read`), so a read report always names the models
-            // directory. The type of `drives` cannot say so.
-            format!("The {stage} stage's report, the latest, is read")
+            // drives are not state then models (`survey::read`), so a read
+            // report always names the models directory. The type of
+            // `drives` cannot say so.
+            "The report is read".to_owned()
         }
     };
     Err(format!(

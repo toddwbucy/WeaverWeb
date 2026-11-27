@@ -1,11 +1,15 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
 {#- The build page (Spec 6.2): one pane, unbuilt, linking the declaration
-    screen as built. -#}
+    screen as built, and the agent's loop page where Confirm stands and the
+    box is paired. -#}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>Build</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
   <div class="body">
-  <p>The box lays the agent from the deployment tuple once Confirm stands. The fields no setup page asks are on <a href="/declarations">the declaration screen</a>, as built.</p>
+  <p>The appliance's setup script lays the agent's account and its folder at the pairing. The box lays the rest of the agent from the deployment tuple once Confirm stands. The fields no setup page asks are on <a href="/declarations">the declaration screen</a>, as built.</p>
+  {%- if let Some(href) = loop_href %}
+  <p class="loop">The agent's loop, the wire file it runs, is on <a href="{{ href }}">its loop page</a>.</p>
+  {%- endif %}
   </div>
   <footer>{% if frame.state == "confirmed" %}Confirm stands. Waits on the rulings that hold the board and the prompt tuple panel.{% else %}Waits on Confirm. The board and the prompt tuple panel are held by the rulings.{% endif %}</footer>
 </section>

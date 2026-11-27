@@ -1358,7 +1358,9 @@ async fn the_models_drives_need_counts_a_shared_blob_once() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let after = page(&rig.app, &drives, &ada).await;
     assert!(
-        after.contains("<p>No report has arrived at either stage, so the need is not judged against the models directory.</p>"),
+        after.contains(
+            "<p>No report has arrived, so the need is not judged against the models directory.</p>"
+        ),
         "{after}"
     );
     let one = twin_part().len() as u64;

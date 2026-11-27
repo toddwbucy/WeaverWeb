@@ -757,28 +757,35 @@ struct PairingPage {
     unspecified_warning: bool,
     /// The waiting box's pane, the enrollment's parts (Spec 8.2).
     pair: pair::PairPane,
-    /// **The pairing stage's report, read only, once the box is paired**
-    /// (Spec 8.2, the operator's ruling of 2026-11-24): none before.
+    /// **The report, read only, once the box is paired** (Spec 8.2, the
+    /// operator's ruling of 2026-11-24): none before.
     report: Option<report::Shown<report::PairingBody>>,
+    /// When a row kept under version 1's stage `drives` arrived, named and
+    /// feeding nothing.
+    drives_kept: Option<String>,
     /// The way on once the box is paired: the declaration's first page.
     declare: Option<Next>,
 }
 
-/// **The pairing stage's report for the Pair page**: read once the setup's
-/// box is paired, and none before, since no report arrives before it.
+/// The report as the Pair page draws it, and when a row kept under the
+/// stage `drives` arrived.
+type PairingReport = (Option<report::Shown<report::PairingBody>>, Option<String>);
+
+/// **The report for the Pair page**: read once the setup's box is paired,
+/// and none before, since no report arrives before it.
 async fn pairing_report(
     store: &Store,
     seams: &Seams,
     setup: &Setup,
-) -> anyhow::Result<Option<report::Shown<report::PairingBody>>> {
+) -> anyhow::Result<PairingReport> {
     if setup.paired.is_none() {
-        return Ok(None);
+        return Ok((None, None));
     }
     let reports = store.reports(seams.boxes.as_ref(), &setup.setup_id).await?;
-    Ok(Some(report::Shown::of(
-        &reports.pairing,
-        report::PairingBody::of,
-    )))
+    Ok((
+        Some(report::Shown::of(&reports.report, report::PairingBody::of)),
+        reports.drives_kept.map(when),
+    ))
 }
 
 /// The Pair page as drawn, the waiting box's pane given.
@@ -788,7 +795,7 @@ fn pairing_page(
     chrome: super::Chrome,
     setup: &Setup,
     pair: pair::PairPane,
-    report: Option<report::Shown<report::PairingBody>>,
+    (report, drives_kept): PairingReport,
 ) -> PairingPage {
     let link = link_of(seams.cfg.link_address());
     PairingPage {
@@ -808,6 +815,7 @@ fn pairing_page(
         link,
         pair,
         report,
+        drives_kept,
         declare: setup
             .paired
             .is_some()
@@ -851,21 +859,16 @@ struct DirectoriesPage {
     keys: Vec<crate::surfaces::ssh_key::KeyView>,
     /// The console's `model_cache`, where set.
     model_cache: Option<String>,
-    /// The directories as mounted, from the latest report of either stage,
-    /// judged (Spec 6.2).
+    /// The directories as mounted, from the report, judged (Spec 6.2).
     directories: report::Shown<report::DrivesBody>,
-    /// The stage of the latest report, which the directories are read from.
-    stage: &'static str,
 }
 
-/// **The directories as mounted**, from the latest report of either stage,
-/// judged against `need`, and that report's stage.
+/// **The directories as mounted**, from the report, judged against `need`.
 fn directories(
     reports: &crate::box_report::Reports,
     need: Option<&Need>,
-) -> (report::Shown<report::DrivesBody>, &'static str) {
-    let (stage, latest) = reports.latest();
-    let shown = report::Shown::of(latest, |survey| {
+) -> report::Shown<report::DrivesBody> {
+    report::Shown::of(&reports.report, |survey| {
         report::DrivesBody::of(
             survey,
             need.map(|need| report::NeedOf {
@@ -873,8 +876,7 @@ fn directories(
                 shown: &need.bytes,
             }),
         )
-    });
-    (shown, crate::box_report::stage_name(stage))
+    })
 }
 
 /// **The models directory's need** (Spec 6.2): the bytes of every pick's
@@ -932,6 +934,9 @@ struct BuildPage {
     admin: bool,
     chrome: super::Chrome,
     frame: Frame,
+    /// **The agent's loop page** (Spec 6.2, 6.3), where Confirm stands and
+    /// the setup's box is paired: the register row the pairing wrote.
+    loop_href: Option<String>,
 }
 
 /// **One page of a setup**, drawn from the store and the config alone.
@@ -966,7 +971,7 @@ async fn page(
                 Ok(read) => read,
                 Err(e) => return fault(e),
             };
-            let (directories, stage) = directories(&reports, need.as_ref());
+            let directories = directories(&reports, need.as_ref());
             DirectoriesPage {
                 here: "declarations",
                 who,
@@ -980,7 +985,6 @@ async fn page(
                     .as_ref()
                     .map(|p| p.display().to_string()),
                 directories,
-                stage,
             }
             .render()
         }
@@ -990,6 +994,11 @@ async fn page(
             admin: true,
             chrome,
             frame,
+            loop_href: setup
+                .paired
+                .as_ref()
+                .filter(|_| setup.state == "confirmed")
+                .map(|(agent, _)| format!("/agents/{agent}/loop")),
         }
         .render(),
         // Each is its child module's, never routed here.

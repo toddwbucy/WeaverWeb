@@ -37,15 +37,28 @@ pub const MAX_TOKENS_PER_TURN: i64 = 4096;
 /// below admits, so they are refused by name: the two `weaver-admin-Spec`
 /// section 4 reserves whole, at WeaverAgent's `6b91747e`, every reserved
 /// suffix of that section holding a `-`, which the character rule refuses;
-/// and the two folders the appliance keeps beside each agent's own folder,
-/// named after the agent (the Planner's lean of 2026-11-25, which the
-/// operator may strike; migration `0034`).
-const RESERVED: [(&str, &str); 4] = [
+/// and `stack`, a folder the appliance keeps beside each agent's own folder,
+/// named after the agent, refused on the operator's ruling of 2026-11-26
+/// ("75 (e). Yes, refuse stack."). **Every name beginning `admin` is
+/// refused too** ([`ADMIN`]): the operator's ruling of 2026-11-26 refuses an
+/// agent named `admin` ("Refuse on the appliance any agent named admin,
+/// admincon or gatecon"), and the appliance's agent-creation script refuses
+/// every name beginning so, since the appliance keeps its administrative
+/// configuration in folders so named beside each agent's own (WeaverAgent's
+/// `deploy/create-agent.sh` at `623fef40`). Migration `0037` holds the same
+/// in the store's CHECK.
+const RESERVED: [(&str, &str); 3] = [
     ("gatecon", ACCOUNT),
     ("admincon", ACCOUNT),
-    ("admin", FOLDER),
     ("stack", FOLDER),
 ];
+
+/// **The beginning no agent's name takes**, and why: the appliance keeps
+/// its administrative configuration in folders whose names begin so.
+const ADMIN: &str = "admin";
+
+/// Why a name beginning [`ADMIN`] is refused.
+const ADMIN_FOLDERS: &str = "a name beginning with admin is refused: the appliance keeps its administrative configuration in folders so named, beside each agent's own, so no agent's name begins with it";
 
 /// Why a name of one of the appliance's own accounts is refused.
 const ACCOUNT: &str = "that name names one of a box's own accounts, so no agent takes it";
@@ -81,6 +94,9 @@ pub fn agent_name(name: &str) -> Result<&str, &'static str> {
     }
     if let Some((_, why)) = RESERVED.iter().find(|(reserved, _)| *reserved == name) {
         return Err(why);
+    }
+    if name.starts_with(ADMIN) {
+        return Err(ADMIN_FOLDERS);
     }
     Ok(name)
 }
@@ -604,6 +620,8 @@ mod tests {
             "gatecon",
             "admincon",
             "admin",
+            "admins",
+            "adminx7",
             "stack",
             "ad a",
             "ad\u{e9}",
@@ -615,7 +633,8 @@ mod tests {
             "abcdefghijklmnop",
             "ada7",
             "gatecon2",
-            "admins",
+            "xadmin",
+            "adamin",
             "stacks",
         ] {
             assert_eq!(agent_name(kept), Ok(kept));

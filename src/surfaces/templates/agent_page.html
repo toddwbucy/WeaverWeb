@@ -67,6 +67,7 @@
   </div>
   {%- endif %}
   {%- include "declare_pane.html" %}
+  <p class="note loop" id="loop-link">The agent's loop, the wire file it runs, is on <a href="/agents/{{ agent_id }}/loop">its loop page</a>.</p>
   <div class="stack" id="run" hx-get="/agents/{{ agent_id }}/run" hx-trigger="every 15s" hx-swap="innerHTML settle:0ms" hx-sync="this:abort">{% include "agent_run.html" %}</div>
   {%- for v in run.verbs %}
   <div class="asked" id="asked-{{ v.verb }}">

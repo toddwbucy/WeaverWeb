@@ -1607,6 +1607,20 @@ impl Listener {
         agent: &AgentId,
         act: Act,
     ) -> (Option<Admission>, Result<Enqueued, VerbError>) {
+        let (admission, asked, _) = self.ask_under_raising(admission, asker, agent, act).await;
+        (admission, asked)
+    }
+
+    /// **[`Listener::ask_under`], saying whether it raised an alert** for
+    /// its refusal, so a caller that raises its own for the same failure,
+    /// a reload left half done, raises none where this one did (Spec 2.14).
+    pub async fn ask_under_raising(
+        &self,
+        admission: Admission,
+        asker: &Asker,
+        agent: &AgentId,
+        act: Act,
+    ) -> (Option<Admission>, Result<Enqueued, VerbError>, bool) {
         let (inner, asker_, agent_) = (self.inner.clone(), asker.clone(), agent.clone());
         let (plane, subject) = (act.plane(), act.granted().to_owned());
         let task = async move {
@@ -1633,19 +1647,18 @@ impl Listener {
         // refusal either, which is the audit's, and not a shed request,
         // which by design leaves no trace. NotConnected, Busy,
         // OutsideCeiling and Lost are reached only past the check.
-        if authorized
-            && let Err(refused) = &asked
+        let raises = authorized
             && matches!(
-                refused,
-                VerbError::NotConnected
+                &asked,
+                Err(VerbError::NotConnected
                     | VerbError::Busy
                     | VerbError::Stalled
                     | VerbError::Audit
                     | VerbError::Lost
                     | VerbError::OutsideCeiling { .. }
-                    | VerbError::Server(_)
-            )
-        {
+                    | VerbError::Server(_))
+            );
+        if raises && let Err(refused) = &asked {
             self.inner.alerts.raise(failure_of(
                 agent,
                 plane,
@@ -1662,7 +1675,7 @@ impl Listener {
                 },
             ));
         }
-        (admission, asked)
+        (admission, asked, raises)
     }
 
     /// A person's verb, admitted, asked, and its answer awaited without a

@@ -88,7 +88,7 @@
   {%- endif %}{% endfor %}
   {%- endif %}
   {%- match pair.paired %}{% when Some with (paired) %}
-  <p>Paired: <span class="mono">{{ paired.0 }}</span>, by {{ paired.1 }}. The appliance's setup script finishes the box's side.</p>
+  <p>Paired: <span class="mono">{{ paired.0 }}</span>, by {{ paired.1 }}. The appliance's setup script now lays the agent's account and its folder under this name, then finishes the box's side.</p>
   {%- when None %}{% endmatch %}
   {%- if pair.in_step %}
   {%- match pair.closed_until %}{% when Some with (until) %}

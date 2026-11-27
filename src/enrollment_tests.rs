@@ -404,11 +404,15 @@ async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
 /// authority among it and no gate certificate, and then `paired`. **The
 /// Pair page leads into the declaration**: once paired, its way on is the
 /// declaration's first page, Declarations lists the agent and New agent
-/// no longer does.
+/// no longer does. Its paired line says the appliance's setup script now
+/// lays the agent's account and its folder under the agent's name (the
+/// operator's words of 2026-11-25).
 ///
 /// Perturbation: write a gate fingerprint with the row, and its gate plane
 /// reads live; count a gate not enrolled as connected in `Agent::present`,
-/// and the admitted row reads present (each measured 2026-11-25).
+/// and the admitted row reads present (each measured 2026-11-25); the
+/// paired line's old sentence put back, "The appliance's setup script
+/// finishes the box's side." (measured 2026-11-26).
 #[tokio::test]
 async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
     let Some(rig) = rig().await else { return };
@@ -469,6 +473,13 @@ async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
     assert_eq!(pair_audit(s, "pair").await, (1, 1, 0));
     let pairing = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
     assert!(pairing.contains("paired, setup running"), "{pairing}");
+    assert!(
+        pairing.contains(&format!(
+            r#"<p>Paired: <span class="mono">{}</span>, by pair. The appliance's setup script now lays the agent's account and its folder under this name, then finishes the box's side.</p>"#,
+            id.as_str()
+        )),
+        "{pairing}"
+    );
     assert!(
         pairing.contains(&grouped(row.admin.fingerprint.as_deref().unwrap())),
         "{pairing}"

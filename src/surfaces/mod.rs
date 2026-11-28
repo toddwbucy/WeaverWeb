@@ -27,6 +27,7 @@ pub mod record;
 pub mod setup;
 #[cfg(feature = "passkeys")]
 pub mod sign_in;
+pub mod theme;
 
 use axum::Router;
 use axum::extract::State;
@@ -126,6 +127,7 @@ pub fn routes(policy: gate::Policy) -> Router<Store> {
         )
         .merge(record::routes(policy))
         .route("/sign-out", post(gate::sign_out))
+        .route("/theme", post(theme::set))
         .route("/assets/surfaces/instrument.css", get(stylesheet))
         .route("/assets/surfaces/htmx.min.js", get(htmx))
         .route("/assets/surfaces/trace.js", get(trace_module));
@@ -163,13 +165,19 @@ pub(crate) const FIRST_PAGE: &str = "/agents";
 /// violation reported, while a control page's inline script was blocked and
 /// reported. What would not hold is htmx's evaluating attributes (`hx-on`,
 /// `js:` values), which no surface may use while this header stands.
+///
+/// **The same layer draws the browser's theme on every page**
+/// ([`theme::on_page`], Spec 2.8): every surface's router passes through
+/// here, so no page leaves without its theme set.
 pub fn script_policy<S: Clone + Send + Sync + 'static>(router: Router<S>) -> Router<S> {
-    router.layer(axum::middleware::map_response(
-        |mut response: Response| async move {
-            carry_script_policy(&mut response);
-            response
-        },
-    ))
+    router
+        .layer(axum::middleware::map_response(
+            |mut response: Response| async move {
+                carry_script_policy(&mut response);
+                response
+            },
+        ))
+        .layer(axum::middleware::from_fn(theme::on_page))
 }
 
 /// The policy's one value, which every answer carrying it takes from here.

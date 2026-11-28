@@ -34,6 +34,10 @@
     {%- if who.is_empty() %}
     <a href="/record"{% if tab == "operations" %} class="here"{% endif %}>Agent Operations</a>
     <a href="/sign-in"{% if here == "sign-in" %} class="here"{% endif %}>Sign in</a>
+    {#- An empty `.who` takes the free width, so the theme stands at the
+        right here too. -#}
+    <span class="who"></span>
+    {% include "theme_select.html" %}
     {%- else %}
     <a href="/agents"{% if tab == "agents" %} class="here"{% endif %}>Agents</a>
     <a href="/record"{% if tab == "operations" %} class="here"{% endif %}>Agent Operations</a>
@@ -46,6 +50,7 @@
     <a href="/agents" class="status fail">{{ chrome.open_alerts }} open alert{% if chrome.open_alerts != 1 %}s{% endif %}</a>
     {%- endif %}
     <form method="post" action="/sign-out" class="sign-out"><button type="submit">Sign out</button></form>
+    {% include "theme_select.html" %}
     {%- endif %}
   </nav>
   {%- if tab == "agents" %}

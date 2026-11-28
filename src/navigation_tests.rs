@@ -1,4 +1,5 @@
 //! conforms: web-the-bar-stands-in-two-rows
+//! conforms: web-the-theme-is-chosen-in-the-masthead-and-drawn-by-the-server
 //! conforms: web-every-page-declares-its-tab-and-sub-tab
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
 //! conforms: web-the-agent-page-leads-on-to-record-and-links-no-retired-screen
@@ -189,8 +190,12 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     let (top, second) = bar(&signed_out);
     assert_eq!(
         links(&top),
-        pairs(&[("/record", "Agent Operations"), ("/sign-in", "Sign in")]),
-        "{signed_out}"
+        pairs(&[
+            ("/record", "Agent Operations"),
+            ("/sign-in", "Sign in"),
+            ("who", ""),
+        ]),
+        "the empty who takes the free width, so the theme stands at the right: {signed_out}"
     );
     assert_eq!(current(&top), ["Sign in"]);
     assert!(
@@ -791,5 +796,138 @@ async fn the_agent_page_leads_on_to_record_and_links_no_retired_screen() {
     assert!(
         page.contains("The declaration saved under the name karl: version 2"),
         "{page}"
+    );
+}
+
+/// A theme post with the headers htmx sends, or without them.
+async fn post_theme(app: &axum::Router, theme: &str, htmx: bool) -> axum::response::Response {
+    use tower::ServiceExt;
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/theme")
+        .header(axum::http::header::ORIGIN, crate::passkeys_tests::ORIGIN)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        );
+    if htmx {
+        request = request.header("HX-Request", "true");
+    }
+    app.clone()
+        .oneshot(
+            request
+                .body(axum::body::Body::from(form(&[("theme", theme)])))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// **The theme is chosen in the masthead and drawn by the server** (Spec
+/// 2.8; the Planner's brief of 2026-11-28, part 6): every page carries the
+/// drop-down at the masthead's right, with or without a session; a post
+/// keeps one of the six in the browser's cookie, or clears it for auto,
+/// answering htmx with a reload and the form alone with a redirect, and
+/// refusing any other value; and a page leaves the server with `data-theme`
+/// on its root and the choice selected, auto setting no attribute.
+///
+/// Perturbation: drop the layer's call from `script_policy`, and a page
+/// with the cookie leaves with no theme; keep any value posted, and the
+/// odd one is kept; drop the drop-down from the page without a session,
+/// and the sign-in page has none.
+#[tokio::test]
+async fn the_theme_is_chosen_in_the_masthead_and_drawn_by_the_server() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+
+    let answer = post_theme(&rig.app, "graphite", true).await;
+    assert_eq!(answer.status(), StatusCode::NO_CONTENT);
+    assert_eq!(answer.headers()["hx-refresh"], "true");
+    let cookie = answer.headers()[axum::http::header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        cookie,
+        "__Host-weaver_theme=graphite; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000"
+    );
+    let answer = post_theme(&rig.app, "auto", false).await;
+    assert_eq!(answer.status(), StatusCode::SEE_OTHER);
+    assert_eq!(answer.headers()[axum::http::header::LOCATION], "/");
+    assert!(
+        answer.headers()[axum::http::header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .ends_with("Max-Age=0")
+    );
+    for odd in ["Graphite", "solarized", "", "slate; Path=/x"] {
+        let answer = post_theme(&rig.app, odd, true).await;
+        assert_eq!(answer.status(), StatusCode::BAD_REQUEST, "{odd}");
+        assert!(
+            !answer
+                .headers()
+                .contains_key(axum::http::header::SET_COOKIE),
+            "{odd}"
+        );
+    }
+
+    let karl = format!("{ada}; __Host-weaver_theme=umber");
+    for uri in ["/agents", "/record", "/admin/persons", "/pair"] {
+        let (status, headers, page) = send_as(&rig.app, "GET", uri, None, &karl).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {page}");
+        assert!(
+            page.contains(r#"<html lang="en" data-theme="umber">"#),
+            "{uri}: {page}"
+        );
+        assert!(
+            page.contains(r#"<option value="umber" selected>Umber</option>"#),
+            "{uri}: {page}"
+        );
+        for other in ["auto", "slate", "graphite", "chalk", "mist", "paper"] {
+            assert!(
+                !page.contains(&format!(r#"<option value="{other}" selected>"#)),
+                "{uri}: {other}"
+            );
+        }
+        assert_eq!(headers["content-security-policy"], "script-src 'self'");
+    }
+    let (_, _, page) = send_as(&rig.app, "GET", "/agents", None, &ada).await;
+    assert!(
+        page.contains(r#"<html lang="en">"#) && !page.contains("data-theme"),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<option value="auto" selected>Auto</option>"#),
+        "{page}"
+    );
+    let masthead = &page[page.find(r#"<nav class="masthead">"#).unwrap()..];
+    let masthead = &masthead[..masthead.find("</nav>").unwrap()];
+    assert!(
+        masthead.find("Sign out").unwrap() < masthead.find(r#"<select name="theme""#).unwrap(),
+        "the theme stands at the right, after sign-out: {masthead}"
+    );
+
+    let (status, _, page) = send_as(
+        &rig.app,
+        "GET",
+        "/sign-in",
+        None,
+        "none; __Host-weaver_theme=paper",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains(r#"<html lang="en" data-theme="paper">"#)
+            && page.contains(r#"<option value="paper" selected>Paper</option>"#),
+        "a page without a session carries the choice: {page}"
+    );
+    // A fragment carries neither the root nor the drop-down.
+    let (_, _, fragment) = send_as(&rig.app, "GET", "/availability", None, &karl).await;
+    assert!(
+        !fragment.contains("<html") && !fragment.contains("data-theme"),
+        "{fragment}"
     );
 }

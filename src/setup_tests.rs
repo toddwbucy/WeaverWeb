@@ -1554,7 +1554,10 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
     ] {
         assert!(!lowered.contains(never), "{never}: {body}");
     }
-    let forms = new.matches("<form ").count() - new.matches(r#"action="/sign-out""#).count();
+    // The masthead's two forms, sign-out and the theme, are every page's.
+    let forms = new.matches("<form ").count()
+        - new.matches(r#"action="/sign-out""#).count()
+        - new.matches(r#"action="/theme""#).count();
     assert_eq!(forms, 1, "one form: {new}");
     let form_at = new
         .find(r#"<form method="post" action="/pair#finalize" id="finalize" class="stack">"#)

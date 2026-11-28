@@ -241,7 +241,7 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::SetupNameHeld(name) => write!(
                 f,
-                "an open setup holds the name {name}, and one setup holds a name at a time, so choose another name, or continue that agent under Declarations"
+                "an open setup holds the name {name}, and one setup holds a name at a time, so choose another name, or continue that agent from the Agents list"
             ),
             Refusal::SetupNameHeldUnpaired(name) => write!(
                 f,

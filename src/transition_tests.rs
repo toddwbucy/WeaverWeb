@@ -237,7 +237,7 @@ async fn an_admission_meeting_a_transition_completes() {
         "{shown_page}"
     );
     let (_, _, list) = send_as(&rig.app, "GET", "/agents", None, &bea_session).await;
-    assert!(list.contains("processes 4100 still stand"), "{list}");
+    assert!(list.contains("<td>in transition "), "{list}");
 }
 
 /// A live trace event of `kind` at `seq`.

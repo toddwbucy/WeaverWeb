@@ -68,10 +68,18 @@ async fn a_person_reads_only_the_agents_they_hold_a_grant_on() {
     let (status, _, _) = send_as(&rig.app, "GET", "/agents/box-b%2Fjane", None, &session).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // The admin holds no grant on either: nothing here, and the register
-    // page shows the rows without their state.
+    // The admin holds no grant on either: the Agents list names both, each
+    // opening its row on the register, by a word the register gives alone,
+    // and the register page shows the rows without their state.
     let (_, _, list) = send_as(&rig.app, "GET", "/agents", None, &admin_session).await;
-    assert!(!list.contains("karl") && !list.contains("jane"), "{list}");
+    for label in ["box-a/karl", "box-b/jane"] {
+        assert!(
+            list.contains(&format!(
+                "<td><a href=\"/admin/agents\">{label}</a></td>\n      <td>registered</td>"
+            )),
+            "{list}"
+        );
+    }
     let (status, _, _) = send_as(
         &rig.app,
         "GET",
@@ -1013,7 +1021,7 @@ async fn an_agent_with_admin_con_alone_reads_admin_alone_and_never_present() {
     assert!(!page.contains("both planes connected"), "{page}");
     assert!(!page.contains("turns unavailable"), "{page}");
     let list = read("/agents".to_owned()).await;
-    assert!(list.contains("<td>not enrolled</td>"), "{list}");
+    assert!(list.contains("box-a/karl"), "{list}");
     assert!(!list.contains("turns unavailable"), "{list}");
     let (_, _, register) = send_as(&rig.app, "GET", "/admin/agents", None, &admin_session).await;
     assert!(

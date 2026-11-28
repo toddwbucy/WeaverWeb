@@ -1038,20 +1038,18 @@ sign in. **The bar stands in two rows** (the operator's words of
 2026-11-13; `docs/design/system/components/Masthead`). The top row holds
 three tabs, in this order:
 
-- **Agents**, the agents' work. Its sub-tabs stand in the path's order,
-  each carrying the stage marks it serves: New agent, 1 Declare, the first
-  page of stage 1 (the operator's ruling of 2026-11-25: "New agent is the
-  first page of stage 1"), and Declarations, 1 Declare, which opens the
-  start page (section 6.2), then Register, 2 Provision, each for an admin,
-  and the admin's Agents tab opens New agent; then Your agents, 3 Run and
-  4 Observe, the agents the person holds a grant on.
+- **Agents**, the agents' work, and one sub-tab, **Agents**, the Agents
+  list below. Every page the list opens marks it: New agent and its Pair
+  pages, the declaration's pages and the agent's page.
 - **Agent Operations**, holding The Record, the record of the whole
   lifecycle and no stage's own. The operator's word of 2026-11-13 places
   experiments, the conversation with an agent, multi-agent workflow
   coordination and foundation-model support under this tab later, and puts
   the work outside it first: none of them is built here.
-- **IAM**, identity and access: Persons, Grants, Hugging Face and SSH keys
-  for an admin, Hugging Face the console's account at Hugging Face (section
+- **IAM**, identity and access: Persons, Grants, Register, Hugging Face and
+  SSH keys for an admin, Register the register of agents (section 2.13),
+  where an admin registers an agent and rotates, revokes and retires its
+  credentials, Hugging Face the console's account at Hugging Face (section
   2.15) and SSH keys the operator's SSH public keys (section 6.2), then
   Passkeys, the person's own.
 
@@ -1062,8 +1060,34 @@ sub-tabs of the tab the page belongs to, the current one marked and the
 row named by its tab. **Every page declares its sub-tab** by the one field
 it already carried, `here`, and one table (`surfaces::tab_of`) names each
 sub-tab's tab, so no page names both and none can name a pair that does
-not stand. A person who is not an admin sees Your agents, The Record and
+not stand. A person who is not an admin sees Agents, The Record and
 Passkeys, the sub-tabs they may open.
+
+**The Agents list** (`GET /agents`) is the Agents tab's one page, on the
+operator's words of 2026-11-27: "on the first tab we should have a list of
+agents and teh create new agent button that is all. if you click the create
+agent button THEN you go to what is currently called the new agent tab, if
+you pick an agent that already exists then you should be sent to the
+declaration for that agent with all its information there." For an admin it
+names every agent the register holds and every setup still waiting for its
+appliance, sorted by name, an agent by its box and name and a waiting setup
+by its name, each with one plain state word, and holds one button, Create
+new agent, which opens New agent (section 6.2). Nothing else stands on it.
+An admin's row opens the agent's declaration: a waiting setup's Pair page,
+and once paired its directories page, confirmed or not; an agent no setup
+names opens its own page where the admin holds a grant on it, and its row
+on the register where not. **The state word**, in this order: `retired`,
+no plane's credential live; `in transition`; the load state where it is not
+`unloaded`; the setup's step, `waiting for its appliance`, `paired`,
+`declaring` once a model is picked or the placement kept, `confirmed`;
+`unloaded`; `registered`. **A load state or a transition is said only
+under a grant**, as the register page shows no agent's state (section
+2.13): without one, the word comes from the register and the setup alone.
+An agent's open alerts stand beside its word as a fail status under a grant,
+since the open-alert count of the top row links here. A person who is not
+an admin sees the agents they hold a grant on and no other, each opening its
+own page, and no button. `GET /setup`, which was Declarations, the start
+page, leads here.
 
 **A refusal is drawn at its own status** (this document's election of
 2026-11-13, for the operator's ruling by the merge). The page's htmx
@@ -1076,13 +1100,12 @@ connectors answer an agent without a grant with a fragment saying so, at
 404, rather than keep what they last drew. The status stays the truth: an
 htmx answer is never 200 with a refusal inside it.
 **`GET /` sends the browser on**: to `/sign-in` where the request names no
-session that serves, and where it names one, to `/pair` where the session's
-person holds the admin grant and to `/agents` where not, since the agents' work
-is done in that order (the operator's ruling of 2026-11-25, on the order of
-work). **Every sign-in lands where `GET /` sends its session**, a passkey's and
-a sign-in token's alike (the Planner's ruling of 2026-11-25). It reads the
-session as any use does and the admin grant as the admin pages do, and is a
-redirect (`303 See Other`) and never a page of its own.
+session that serves, and where it names one, to the Agents list, `/agents`,
+for every person, an admin's Create new agent leading on from it (the
+operator's words of 2026-11-27). **Every sign-in lands where `GET /` sends
+its session**, a passkey's and a sign-in token's alike (the Planner's ruling
+of 2026-11-25). It reads the session as any use does, and is a redirect
+(`303 See Other`) and never a page of its own.
 
 **Sign-in by passkey is name-first**, as built on 2026-10-09 (`/sign-in`): the person
 gives their name, found by its canonical form, and answers a challenge for
@@ -2223,8 +2246,10 @@ it decides are stated here and in section 2.8, and the reasons are there.
   the first check that finds either ended, a disable, a removed passkey or
   grant, or the session's expiry, the twelve-hour limit included. **As
   built on 2026-10-12**: `GET /agents` lists the agents the session's
-  person holds a live grant on, any role, by box and name with each plane's
-  connection, and no other, a person with none seeing an empty list;
+  person holds a live grant on, any role, by box and name, and no other, a
+  person with none seeing an empty list; since 2026-11-28 it is the Agents
+  list (section 2.8), which names every agent to an admin and says a load
+  state only under a grant;
   `GET /agents/{ag}` shows one agent's register row (presence per plane,
   the declared ceiling, the trace door, the load state with its source and
   date, the run's tuple and constituents) and the person's roles on it.
@@ -4186,7 +4211,7 @@ to: web-uncertified-diagnostic-record-is-not-drawn
 
 ### 6.1 The declaration screen
 
-**Declare is a start page, the setup pages and the build page**, on the operator's
+**Declare is the setup pages and the build page, each agent's opened from the Agents list (section 2.8)**, on the operator's
 rulings of 2026-11-16 (setup pages) and their addendum, which replace the two screens of
 the rulings of 2026-11-11 as the stage's path (`weaver-web-PRD` section 3.0), and on the
 operator's rulings of 2026-11-23: "Pairing is its own page", "the agent is named at
@@ -4195,8 +4220,8 @@ before the declaration, on New agent, the first page of stage 1** (section 6.2):
 name, says what to do at the appliance, shows the box waiting and takes the short
 one-time code the box shows once the operator has compared the fingerprint, with a
 checkbox saying whether the box is a virtual machine or a host and a warning where the
-address is localhost and the checkbox says virtual machine (section 8.2). The start page
-lists the paired agents whose declaration is open. The setup pages follow in this order.
+address is localhost and the checkbox says virtual machine (section 8.2). The Agents
+list opens each paired agent's declaration. The setup pages follow in this order.
 The directories page shows the two directories as the box reports them mounted, from the
 report, the operator having laid the disks before pairing (the report itself shows on
 the Pair page, section 6.2), and on a host the
@@ -4694,14 +4719,15 @@ written, and nothing is installed, validated or seeded.
 
 ### 6.2 The setup pages
 
-**Declare's path is New agent, the start page, the setup pages and the build page**,
+**Declare's path is New agent, the setup pages and the build page**, opened from the
+Agents list (section 2.8),
 on the operator's rulings of 2026-11-16 (setup pages) and items 1 to 20 of their
 addendum, and on the operator's rulings of 2026-11-23. The decisions this section takes
 are this document's election of 2026-11-16, revised the same day after the appliance
 flow was walked by hand. The pages light what exists and draw the rest held. Live: New
 agent, the Pair page's checkbox, link address and port, its waiting boxes, fingerprint
-and code where the console's build serves the enrollment (section 8.2), the start page,
-the survey's report, the directories as the box mounted them, the models page and its
+and code where the console's build serves the enrollment (section 8.2), the survey's
+report, the directories as the box mounted them, the models page and its
 need for the models directory, the placement page's context length, turn context and
 devices, and the box's members of the deployment tuple. The survey's report, the
 directories as mounted, the devices and the box's members come from the box's reports
@@ -4721,8 +4747,9 @@ is named at pairing. The agent must be identified at every level where it intera
 before pairing, with our help: a models disk at least 10 GB larger than the model, and a
 state disk, mounted at our default paths unless they choose others." And on his ruling
 of 2026-11-25: "A. Eight stages stay. New agent is the first page of stage 1." New agent
-stands first under Agents, before Declarations, its pages' panes carrying the stage
-mark `1 Declare` and no setup rail. The agent is named there, so the setup row a pairing links is made
+opens from the Agents list's one button, Create new agent (section 2.8; the operator's
+words of 2026-11-27), its pages' panes carrying the stage mark `1 Declare` and no setup
+rail. The agent is named there, so the setup row a pairing links is made
 when the agent is named, and no migration moves: the row stays the pairing's record (the
 Planner's ruling of 2026-11-24 on the plan). One box carries one setup, and the
 replace-box write of section 8.2 stays as it is, since "One agent per VM is the
@@ -4788,8 +4815,8 @@ admin as principal by `session`. Reads are not audited.
 - `POST /pair/{su}`: the checkbox
 - `POST /pair/{su}/code`: a code's entry for a setup begun the old way (section 8.2),
   where the console's build serves the enrollment
-- `GET /setup`, the start page: the paired agents whose declaration is open, each a link
-  to its directories page
+- `GET /setup`: leads to the Agents list (section 2.8), which opens each agent's
+  declaration
 - `GET /setup/{su}/{page}`, where `{page}` is `directories`, `models`, `placement`,
   `confirm` or `build`
 - `POST /setup/{su}/models`: a pick, an adapter's carrying its scale
@@ -4803,13 +4830,13 @@ admin as principal by `session`. Reads are not audited.
 - `GET /admin/ssh-key`, `POST /admin/ssh-key` and `POST /admin/ssh-key/{sk}/remove`: the
   operator's SSH public keys
 
-Declare's two sub-tabs under Agents, each with its stage mark 1 Declare, stand first:
-New agent, which opens `/pair`, and Declarations, which opens the start page. Register,
-with its stage mark 2 Provision, follows them. The declaration screen of section 6.1
+The Agents list (section 2.8) opens New agent by its one button and each agent's
+declaration by its row, and Register stands under IAM. The declaration screen of section 6.1
 stays as built, its rows untouched,
 reached from the build page's stub for the fields no setup page asks. **Once the box is
 paired, the Pair page's way on is the directories page of that agent's setup**, the
-declaration's first page, and the agent leaves New agent's list for the start page's.
+declaration's first page, and the agent leaves New agent's list, the Agents list naming
+it paired.
 **A declaration opens once its box is paired** (the Planner's ruling of 2026-11-24 on
 the review): a declaration page of a setup whose box is not paired leads to its Pair
 page, and a pick, the adapter's drop, the placement and Confirm on it are refused 409
@@ -4827,8 +4854,8 @@ same ruling). It is recorded in the tuple and read by those warnings alone; the 
 
 **How the declaration begins after a pairing**, on the operator's ruling of 2026-11-24:
 "A. The Pair page leads straight into the next page for that agent." The Pair page's
-success leads into the directories page for that agent, and Declarations, the start
-page, lists the paired agents whose declaration is open.
+success leads into the directories page for that agent, and the Agents list opens it
+there, while its declaration is open and after.
 
 **The name New agent takes is the name admin derives the agent's identities from.** On
 the operator's rulings of 2026-11-16 (setup pages) the appliance names its directories
@@ -4868,8 +4895,7 @@ Confirm stands is the rest of the agent (below). On the state drive each agent h
 named for it, which holds the agent's folder and its home side by side.
 
 **Every pane carries its stage, its backing and its status**, healthy states included:
-the header's stage mark, `1 Declare` on New agent's pages, the start page and the setup
-pages, its backing (`built`, `partly` or `unbuilt`) and a
+the header's stage mark, `1 Declare` on New agent's pages and the setup pages, its backing (`built`, `partly` or `unbuilt`) and a
 status word in a status mark (`ok`, `hold` or `fail`, the design system's Marks). **A
 held pane says in its footer what it waits on and shows no value it did not read**: no
 blank field passed off as a value, no input holding a value, no default device, and no
@@ -7941,7 +7967,7 @@ two connectors report.
 | an enrollment token is issued only for a person holding no passkey, lives at most seven days, is kept as its digest, and is its person's one live token | perturbation in `src/host_tests.rs`: drop the passkey check, and a token is issued for a person holding a credential, which an admin could redeem over theirs; drop the command's lifetime bound, and a token past seven days is refused only by the store, as a fault; drop the store's lifetime check, and a row past seven days lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person. And in `src/config.rs`: configure a lifetime past seven days, and it is taken |
 | a sign-in token is issued by the host alone and only where the config names `token`, lives at most an hour, is kept as its digest, is its person's one live token, is revoked by a disable or the host reset, and opens one session, by its person's name, naming its method and no passkey; and a person issued one takes an enrollment token from the host alone | perturbation in `src/sign_in_token_tests.rs`: drop the command's refusal where the config names no `token`, and a server configured as before issues one; mount the token's route whatever the config, and such a server serves it; drop the store's lifetime check, and a row past an hour lands; store the token in the clear, and a read of the token table is a set of usable tokens; leave an earlier token live when issuing, and the newest is refused against the one live token per person; drop the redemption's match on a token still live, and one token opens two sessions, one after the other or two at once; drop the check of the name, and a token signs in under another person's name; drop the expiry, and an expired token signs in; drop the check of its person, at the lookup and at the opening, and a disabled person's token opens a session; drop the disable's revocation, and a token issued before a disable signs in after an enable; drop the host reset's revocation, and a token printed before a reset signs in after it; drop the admin's refusal, and an admin issues an enrollment token for a person who signs in by token; drop the revocation at a sign-in token's issue, and an admin's enrollment token issued before it still starts an enrollment after; drop the session's check of its method against its passkey, and a session of a passkey's method naming no passkey lands. And in `src/config.rs`: take an empty `sign_in` or one naming a method twice, and it loads |
 | where the config names `no_sign_in_as`, every browser request with no cookie is served as that one person through one standing session, opened by the sign-in token's own path; a config naming none serves no one without a session; the start refuses a person unknown or disabled; a refusal while the server runs writes no audit record; a person named by `pe-` identity is served; two first uses open one session, and a use the held session serves waits on no opening; an opening ends the person's other tokens | perturbation in `src/standing_tests.rs`: drop the standing person's turn in `gate::session`, and The Record asked with no cookie links to sign-in; drop it in `gate::session_in_background`, and a poll reads no one; build the policy without the standing person, and nothing is served; let the start's check refuse nothing, and an unknown and a disabled person pass it; let the opening's read refuse no disabled person, and twenty uses write forty audit records; match the redemption on the config's spelling, and a person named by `pe-` identity is never served; hold the opening lock across every use, and a served use waits on an opening; drop the second look under the lock, and eight first uses open eight sessions; drop the sign-in token issue's revocation of the enrollment token, and one stays live across an opening. And in `src/config.rs`: take an empty name, or a name with a `sign_in` that does not name `token`, and it loads |
-| `GET /` sends a browser to sign-in without a session, and with one to `/pair` where its person holds the admin grant and to `/agents` where not; every sign-in lands there too | perturbation in `src/sign_in_token_tests.rs`, `the_root_sends_a_browser_on`: a request with no cookie and one whose cookie names no session are sent to sign-in, and a person without the admin grant lands on `/agents` from the token's sign-in and from `GET /`, an admin on `/pair`; in `src/sign_in_tests.rs`, `a_person_enrolled_signs_in_and_the_session_serves`, a passkey's sign-in names the same next page for each; and in `src/standing_tests.rs` the standing person, an admin, is sent to `/pair`. Send every session to `/pair`, and the person without the grant fails; send every session to The Record, and the admin fails |
+| `GET /` sends a browser to sign-in without a session, and with one to the Agents list, `/agents`, admin or not; every sign-in lands there too | perturbation in `src/sign_in_token_tests.rs`, `the_root_sends_a_browser_on`: a request with no cookie and one whose cookie names no session are sent to sign-in, and a person without the admin grant and an admin each land on `/agents` from the token's sign-in and from `GET /`; in `src/sign_in_tests.rs`, `a_person_enrolled_signs_in_and_the_session_serves`, a passkey's sign-in names the same next page for each; and in `src/standing_tests.rs` the standing person, an admin, is sent to `/agents`. Send every session to `/pair`, or to The Record, and all three fail (each measured 2026-11-28) |
 | an enrollment token is single-use and redeemed only within its lifetime | perturbation, against a soft passkey (`webauthn-authenticator-rs`, a dev-dependency) in `src/passkeys_tests.rs`: drop the token's expiry, its end, its person's enable or the person's holding no passkey from what makes a token redeemable, and that token starts a ceremony; drop the transaction's re-check, and a passkey appearing between the options and the finish leaves the person holding two; leave the token unended at the redemption, and it redeems again; drop the check of a credential ID already held, and the finish fails at the store rather than refusing. A redemption sets no cookie and writes no session row, which the end-to-end test asserts |
 | an enrollment token is 32 bytes of the operating system's cryptographic randomness | perturbation in `src/store/identity_tests.rs`: draw bearers from a counter, and consecutive bearers share a prefix, the next guessed from the last |
 | a ceremony identity is drawn as every bearer the server issues is | perturbation in `src/passkeys_tests.rs`: draw ceremony identities from a counter, and consecutive identities share a prefix, the next guessed from the last |
@@ -8012,9 +8038,10 @@ two connectors report.
 | no two lineages share a name, and a lineage keeps its name | perturbation in `src/declarations_tests.rs`, `no_two_lineages_share_a_name_and_a_lineage_keeps_its_name`: drop the screen's check, or the store's under the key, and a second lineage saves under a held name, or a save renames its lineage, each check exercised alone; the index on a root's name stands beneath both |
 | only the server-wide admin grant reads or writes a declaration, and a refused save is one record | perturbation in `src/declarations_tests.rs`, `only_the_admin_grant_reads_or_writes_a_declaration`: drop the gate, and a person holding only a per-agent role reads the list and saves; a refused save writes exactly one audit record, carrying the refusal, and no row |
 | the declaration screen reaches no agent and no host | `the_declaration_screen_reaches_no_agent_and_no_host` in `src/declarations_tests.rs`, with a real listener and a fake connector of each plane connected and admitted: every route is exercised, a save, a save from it and two refusals among them, and neither connector is sent a line, the server sending a connector no heartbeat of its own |
-| the bar stands in two rows: Agents, Agent Operations and IAM on top in that order, each opening the first sub-tab the person may open, then who is signed in, the open-alert count as a status and the sign-out at the right; beneath, the sub-tabs of the page's tab in their order, the agents' carrying their stage marks, the current one marked and the row named by its tab; a person sees the sub-tabs they may open, and a page without a session Agent Operations and sign-in alone | perturbation in `src/navigation_tests.rs`, `the_top_row_holds_three_tabs_and_the_status_at_the_right` and `the_second_row_holds_the_sub_tabs_of_the_pages_tab`, on the base template: swap Agents and Agent Operations or put IAM before Agent Operations, and the admin's top row fails on its order; open an admin's Agents at Your agents or IAM at Passkeys, or a person's IAM at Persons, and that person's top row fails; set the open-alert count among the tabs, before who or between Agents and Agent Operations, and it fails on its place; drop Agent Operations from a page without a session, put sign-in before it, or name the tab The Record, and that row fails; give a page of no tab the agents' tab, and the sign-in page fails on its second row; mark Agent Operations on every page, and the second row's test fails on the tab (12 cases); swap Declarations and Register or Persons and Grants, or put Your agents before Register or Passkeys before Persons, and the second row fails on its order; drop any of the four stage marks or number Declare 2, and it fails on the agents' row; move Declarations, Register, Persons or Grants out of the admin's condition, and a person's row names it; leave The Record unmarked or mark Register on Declarations, and it fails on the current sub-tab; name the agents' row Your agents or leave the IAM row unnamed, and it fails on the row's name; name the sub-tab Agents, or head The Record's page Record or Your agents' page Agents, and it fails on the name (20 cases); each caught; under Agents, New agent stands first with its stage mark 1 Declare, before Declarations, as the first page of stage 1 (the operator's ruling of 2026-11-25), and the admin's Agents opens it: drop it from the bar, and both the second row's test and `every_page_declares_its_tab_and_sub_tab` fail; swap it with Declarations, and the second row fails on its order; open the admin's Agents at `/setup`, and the admin's top row fails; head its page Pair a box, and the second row's test fails on the name (each measured 2026-11-25) |
-| every page declares its sub-tab, and one table names each sub-tab's tab | perturbation in `src/navigation_tests.rs`, `every_page_declares_its_tab_and_sub_tab`, over every page an admin opens and a scan of every `here` the surfaces declare: put Register under IAM, Persons under Agents or The Record under Agents, or leave Passkeys of no tab, and a page fails on its tab; have the agent page declare The Record, the hand-over Your agents or the declaration screen Register, and that page fails on its tab and sub-tab; have the passkeys page name no sub-tab, and it fails on the page and the scan (8 cases, each caught); it walks New agent, the requirements page and the Pair page, each declaring New agent under Agents |
-| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught); in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: draw Confirm's form with a member unread, or the confirm page's next page before Confirm, and the held page offers it, `src/setup_tests.rs`'s walk naming the second too; drop Confirm's refusal of a member unread before its first record, and the refused post records one (each measured); in `src/enrollment_tests.rs`, `a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled`, once the box is paired the Pair page's way on is the directories page, the start page lists the agent and New agent no longer does: offer no way on once paired, or list paired setups on New agent too, and it fails; in `src/setup_tests.rs`, `a_second_open_setup_of_one_name_is_refused`, list unpaired setups on the start page too, and it fails (each measured 2026-11-24); in `src/setup_tests.rs`, `a_declaration_opens_once_its_box_is_paired`, every declaration page of an unpaired setup leading to its Pair page and its pick, drop, placement and Confirm refused 409 with no record: serve the page, or take the placement, drop or Confirm, or the pick, or serve the header or the pull fragment, and it fails (each measured 2026-11-24) |
+| the bar stands in two rows: Agents, Agent Operations and IAM on top in that order, each opening the first sub-tab the person may open, then who is signed in, the open-alert count as a status and the sign-out at the right; beneath, the sub-tabs of the page's tab in their order, the current one marked and the row named by its tab, Agents holding its one sub-tab, the Agents list, marked on every page of the tab; a person sees the sub-tabs they may open, and a page without a session Agent Operations and sign-in alone | perturbation in `src/navigation_tests.rs`, `the_top_row_holds_three_tabs_and_the_status_at_the_right` and `the_second_row_holds_the_sub_tabs_of_the_pages_tab`, on the base template: swap Agents and Agent Operations or put IAM before Agent Operations, and the admin's top row fails on its order; open IAM at Passkeys for an admin, or at Persons for a person, and that person's top row fails; set the open-alert count among the tabs, before who or between Agents and Agent Operations, and it fails on its place; drop Agent Operations from a page without a session, put sign-in before it, or name the tab The Record, and that row fails; give a page of no tab the agents' tab, and the sign-in page fails on its second row; mark Agent Operations on every page, and the second row's test fails on the tab; swap Persons and Grants, or put Passkeys before Persons, and the second row fails on its order; move Persons or Grants out of the admin's condition, and a person's row names it; leave The Record unmarked, and it fails on the current sub-tab; leave the IAM row unnamed, and it fails on the row's name; head The Record's page Record, and it fails on the name (each caught); open the admin's Agents tab at `/pair` again, and the admin's top row fails; put New agent back in the Agents row, and the second row fails on its links; mark the Agents sub-tab on the list alone, and New agent's page fails on the current sub-tab (each measured 2026-11-28) |
+| every page declares its sub-tab, and one table names each sub-tab's tab | perturbation in `src/navigation_tests.rs`, `every_page_declares_its_tab_and_sub_tab`, over every page an admin opens and a scan of every `here` the surfaces declare: put Register back under Agents (measured 2026-11-28), Persons under Agents or The Record under Agents, or leave Passkeys of no tab, and a page fails on its tab; have the agent page declare The Record, the hand-over the Agents list or the declaration screen Register, and that page fails on its tab and sub-tab; have the passkeys page name no sub-tab, and it fails on the page and the scan (8 cases, each caught); it walks New agent, the requirements page and the Pair page, each under Agents |
+| the Agents list is the Agents tab's one page: for an admin every agent and every setup waiting for its appliance, by name with one plain state word, and one button, Create new agent, which opens New agent; a setup's row opens its declaration, an agent no setup names its own page under a grant and its register row without one; a load state is said only under a grant; a person who is not an admin sees the agents they hold a grant on, each opening its page, and no button | perturbation in `src/navigation_tests.rs`, `the_agents_list_names_each_agent_by_one_word_and_opens_its_declaration`, over six rows retired, registered, paired, declaring, confirmed or loaded, and waiting for its appliance: say the load state without a grant, and jane reads loaded to an admin holding none; drop the button's admin condition, and the page of a person without the grant holds it; open an admin's setup row at its agent's page, and mara's row fails; leave the setups in their pairing step out, and otto is missing (each measured 2026-11-28) |
+| a page's way forward stands where its condition holds and nowhere else | perturbation in `src/navigation_tests.rs`: drop a saved declaration's way forward, or the name its link carries, or plant one on the empty screen, and `a_saved_declaration_leads_on_to_registering_its_name` fails; let the register's form fill any name, or none, or drop the field's value, and it fails on the prefill; invert the hand-over's read of the admin's grant, or fix it either way, drop the box sentence under a grant, or point the Grants link at the agent's page, and `the_hand_over_leads_on_to_the_agents_page_or_says_why_not` fails (11 cases, each caught); in `src/surfaces/agents.rs`, read a failed grant read as none held, and `a_grant_read_is_held_not_held_or_unread` fails; render an unread grant as none held, or drop either of its two links, and `the_hand_over_says_an_unread_grant_is_unread` fails (4 cases, each caught); in `src/setup_place_tests.rs`, `confirm_stands_only_where_every_member_is_read_and_writes_one_tuple`: draw Confirm's form with a member unread, or the confirm page's next page before Confirm, and the held page offers it, `src/setup_tests.rs`'s walk naming the second too; drop Confirm's refusal of a member unread before its first record, and the refused post records one (each measured); in `src/enrollment_tests.rs`, `a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled`, once the box is paired the Pair page's way on is the directories page and New agent no longer lists the agent: offer no way on once paired, or list paired setups on New agent too, and it fails (each measured 2026-11-24); in `src/setup_tests.rs`, `a_declaration_opens_once_its_box_is_paired`, every declaration page of an unpaired setup leading to its Pair page and its pick, drop, placement and Confirm refused 409 with no record: serve the page, or take the placement, drop or Confirm, or the pick, or serve the header or the pull fragment, and it fails (each measured 2026-11-24) |
 | the agent page leads every reader on to The Record and an admin alone back to the declaration saved under the agent's name, the rail linking Declare and Provision for an admin alone | perturbation in `src/navigation_tests.rs`, `the_agent_page_leads_on_to_record_and_back_to_its_declaration`: offer the way back to every reader, or to none, and it fails on the person's page or the admin's; drop the way on to The Record or its words that the record is not filtered by the agent, or name it Record, and it fails; name the lineage's root, or a lineage of another name, and it fails on version 2; link no mark, render a linked mark as a span or point Provision at another page, and it fails on the rail; send an agent with no declaration to the list, and it fails on the way back (11 cases, each caught) |
 | the reported members are the agent's as read: each member the Declare pane reads from `show`'s facts or a load event is a field of that shape's struct at the pin, of the type it reads, under the rename it reads, and each it takes as absent is not one | `the_reported_members_are_the_agents_as_read` and `the_reported_members_were_read_at_the_builds_pin` in `src/declaration/reported.rs`, against the dated copy `src/declaration/reported-5ec7ecf8.md`: misname `show`'s state election, read a turn context from `show` or an artifact from a load event, read the load event's election by `show`'s name, or spell either flag as the other shape does, and it fails on the reader's tables; rename `LoadFacts`'s members, name the tee otherwise, give the serving record a turn context, add an engine or a turn context the reader does not read, or make the artifact optional, and it fails on the copy; move the pin without a reread, and the second fails (13 cases, each caught) |
 | each reported member reads equal, differs or not in this report, by the shape its source names, a state election by the first entry for each kind, and an absence is set beside the report as the agent reads it | `each_member_reads_equal_differs_or_not_in_this_report`, `an_absence_is_set_beside_the_report_as_the_agent_reads_it`, `a_kind_named_again_whose_first_entry_is_declared_reads_equal` and `a_kind_named_again_whose_first_entry_is_not_declared_differs` in `src/declaration/reported.rs`: read a state election's kinds in their order or a path named twice twice, compare a state election by its words, or show a difference between two elections that read alike by those words, read a null member as reported, read the tee's election in `show`'s spelling, read any engine or turn context word, or swap a difference's two sides, and the first fails; read an absent turn context as independent, an absent surprisal as true, an absent residual readout as false or an absent state election as the other default, and the second fails; keep every entry of a kind named again, and `a_kind_named_again_whose_first_entry_is_declared_reads_equal` fails; keep its last entry rather than its first, and that test and `a_kind_named_again_whose_first_entry_is_not_declared_differs` fail; drop the words that say the kind was named again, and both fail (16 cases, each caught) |

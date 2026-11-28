@@ -163,6 +163,28 @@ impl Store {
         Ok(rows.iter().map(setup_of).collect())
     }
 
+    /// **The setups the Agents list names** (Spec 2.8): every open setup,
+    /// and every confirmed one its pairing linked to a register row, the
+    /// oldest first, each with whether any of its declaration is kept (a
+    /// model picked, or the placement kept), which tells declaring from
+    /// paired.
+    pub async fn listed_setups(&self) -> anyhow::Result<Vec<(Setup, bool)>> {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT s.*, (s.context_length IS NOT NULL OR s.turn_context IS NOT NULL \
+             OR s.devices IS NOT NULL OR EXISTS \
+             (SELECT 1 FROM agent_setup_model m WHERE m.setup_id = s.setup_id)) AS declared \
+             FROM ({SELECT}) s \
+             WHERE s.state = 'open' OR s.agent_id IS NOT NULL \
+             ORDER BY s.begun_at, s.setup_id"
+        )))
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| (setup_of(r), r.get("declared")))
+            .collect())
+    }
+
     /// **Whether an open setup holds `name`, and if so whether its box is
     /// paired**, for New agent's entry (Spec 8.2): one setup holds a name at
     /// a time, and the exchange's insert decides a race past this read.

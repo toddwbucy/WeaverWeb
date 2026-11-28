@@ -20,9 +20,10 @@
       and IAM, each opening the first sub-tab the person may open; then, at
       the right, who is signed in, the open-alert count as a status, and
       sign out. The second row holds the sub-tabs of the tab the page
-      belongs to (`tab_of` its `here`), the agents' in the path's order with
-      their stage marks, New agent first as the first page of stage 1 (the
-      operator's ruling of 2026-11-25). A person sees what they may open. Without a
+      belongs to (`tab_of` its `here`): under Agents its one sub-tab, the
+      Agents list, which opens New agent and each agent's declaration and
+      page, so every page of the tab marks it (the operator's words of
+      2026-11-27). A person sees what they may open. Without a
       session the top row names Agent Operations and sign-in, as it named
       Record and sign-in before; the pages such a reader opens, sign-in and
       enrollment, are of no tab, so no second row stands, and The Record
@@ -34,7 +35,7 @@
     <a href="/record"{% if tab == "operations" %} class="here"{% endif %}>Agent Operations</a>
     <a href="/sign-in"{% if here == "sign-in" %} class="here"{% endif %}>Sign in</a>
     {%- else %}
-    <a href="{% if admin %}/pair{% else %}/agents{% endif %}"{% if tab == "agents" %} class="here"{% endif %}>Agents</a>
+    <a href="/agents"{% if tab == "agents" %} class="here"{% endif %}>Agents</a>
     <a href="/record"{% if tab == "operations" %} class="here"{% endif %}>Agent Operations</a>
     <a href="{% if admin %}/admin/persons{% else %}/passkeys{% endif %}"{% if tab == "iam" %} class="here"{% endif %}>IAM</a>
     {#- The highest role the bar names is the server-wide one, admin; a
@@ -49,12 +50,7 @@
   </nav>
   {%- if tab == "agents" %}
   <nav class="masthead tabs" aria-label="Agents">
-    {%- if admin %}
-    <a href="/pair"{% if here == "pair" %} class="here"{% endif %}><span class="stage"><b>1</b> Declare</span> New agent</a>
-    <a href="/setup"{% if here == "declarations" %} class="here"{% endif %}><span class="stage"><b>1</b> Declare</span> Declarations</a>
-    <a href="/admin/agents"{% if here == "register" %} class="here"{% endif %}><span class="stage"><b>2</b> Provision</span> Register</a>
-    {%- endif %}
-    <a href="/agents"{% if here == "agents" %} class="here"{% endif %}><span class="stage"><b>3</b> Run</span> <span class="stage"><b>4</b> Observe</span> Your agents</a>
+    <a href="/agents" class="here">Agents</a>
   </nav>
   {%- else if tab == "operations" %}
   <nav class="masthead tabs" aria-label="Agent Operations">
@@ -65,6 +61,7 @@
     {%- if admin %}
     <a href="/admin/persons"{% if here == "admin" %} class="here"{% endif %}>Persons</a>
     <a href="/admin/grants"{% if here == "grants" %} class="here"{% endif %}>Grants</a>
+    <a href="/admin/agents"{% if here == "register" %} class="here"{% endif %}>Register</a>
     <a href="/admin/hugging-face"{% if here == "hugging-face" %} class="here"{% endif %}>Hugging Face</a>
     <a href="/admin/ssh-key"{% if here == "ssh-key" %} class="here"{% endif %}>SSH keys</a>
     {%- endif %}

@@ -181,10 +181,7 @@ async fn token_sign_in(store: Store, shown: Shown, ask: TokenAsk) -> Response {
         Ok(None) => return page(shown, Some(NO_TOKEN_SIGN_IN), StatusCode::FORBIDDEN).await,
         Err(e) => return Fault::from(e).into_response(),
     };
-    let next = match super::first_page(&store, &person_id).await {
-        Ok(next) => next,
-        Err(e) => return Fault::from(e).into_response(),
-    };
+    let next = super::FIRST_PAGE;
     let principal = Principal::Person {
         person_id: &person_id,
         method: PersonMethod::SignInToken,
@@ -382,12 +379,8 @@ async fn finish(store: Store, passkeys: &Passkeys, ask: FinishAsk) -> Response {
     let Some(challenged_id) = challenged.get(&asserted) else {
         return refused(StatusCode::FORBIDDEN, NO_SIGN_IN);
     };
-    // Where the browser goes on, where `GET /` sends the session, read
-    // before the counter rule writes.
-    let next = match super::first_page(&store, &person_id).await {
-        Ok(next) => next,
-        Err(e) => return Fault::from(e).into_response(),
-    };
+    // Where the browser goes on, where `GET /` sends the session.
+    let next = super::FIRST_PAGE;
     let passkey_id = match passkeys::count(&store, challenged_id, &person_id, &result).await {
         Ok(Counted::Admitted { passkey_id }) => passkey_id,
         Ok(Counted::PossibleClone { passkey_id }) => {

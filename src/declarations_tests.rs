@@ -2004,8 +2004,8 @@ async fn only_the_admin_grant_reads_or_writes_a_declaration() {
         "{page}"
     );
     assert!(
-        page.contains("href=\"/setup\" class=\"here\""),
-        "the nav names the page's sub-tab, Declarations, which opens the start page: {page}"
+        page.contains("href=\"/agents\" class=\"here\""),
+        "the nav names the page's sub-tab, the Agents list: {page}"
     );
 }
 

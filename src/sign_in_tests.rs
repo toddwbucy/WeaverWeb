@@ -246,7 +246,7 @@ async fn a_person_enrolled_signs_in_and_the_session_serves() {
     assert!(granted.ok, "{}", granted.value);
     let (status, _, answer) = sign_in(&app, &mut key, "ada").await;
     assert_eq!(status, StatusCode::OK, "{answer}");
-    assert_eq!(next(&answer), "/pair", "the admin grant: {answer}");
+    assert_eq!(next(&answer), "/agents", "the admin grant: {answer}");
 }
 
 /// **A sign-in that cannot proceed opens nothing**: an unknown name, a

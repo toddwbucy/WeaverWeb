@@ -403,7 +403,7 @@ async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
 /// alone" and never present; the box hears its answer, the console's
 /// authority among it and no gate certificate, and then `paired`. **The
 /// Pair page leads into the declaration**: once paired, its way on is the
-/// declaration's first page, Declarations lists the agent and New agent
+/// declaration's first page, and New agent
 /// no longer does. Its paired line says the appliance's setup script now
 /// lays the agent's account and its folder under the agent's name (the
 /// operator's words of 2026-11-25).
@@ -490,11 +490,6 @@ async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
             r#"<p class="next">Next: <a href="/setup/{setup}/directories">Directories</a></p>"#
         )),
         "{pairing}"
-    );
-    let declarations = page(&rig.app, "/setup", &ada).await;
-    assert!(
-        declarations.contains(&format!(r#"<a href="/setup/{setup}/directories">karl</a>"#)),
-        "{declarations}"
     );
     let pair = page(&rig.app, "/pair", &ada).await;
     assert!(!pair.contains(&setup), "{pair}");
@@ -3802,14 +3797,14 @@ async fn a_name_an_open_setup_holds_is_refused_before_any_code_is_compared() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (_, last) = the_box.await.unwrap();
     assert_eq!(last, Some(LastWord::Paired));
-    // A paired holder keeps the sentence that continues under Declarations.
+    // A paired holder keeps the sentence that continues from the Agents list.
     let dialed = dial(&rig, &box_keys("box-b").claim).await;
     let code = dialed.code().to_string();
     let handle = handle_of(&rig, "box-b").await;
     let (status, _, body) = finalize(&rig, &ada, "otto", &handle, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(
-        body.contains("so choose another name, or continue that agent under Declarations</p>"),
+        body.contains("so choose another name, or continue that agent from the Agents list</p>"),
         "{body}"
     );
     assert!(!body.contains("its appliance is not paired"), "{body}");

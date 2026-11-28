@@ -780,7 +780,7 @@ mod entry {
         "choose the appliance from the appliances awaiting final initialization";
 
     /// The answer to New agent's entry that is not a code.
-    const MALFORMED_APPLIANCE_CODE: &str = "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the SSH session shows it: check it and type it again";
+    const MALFORMED_APPLIANCE_CODE: &str = "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the appliance's console shows it: check it and type it again";
 
     /// The answer to New agent's entry whose fingerprints were not compared.
     const NOT_COMPARED: &str =
@@ -810,8 +810,28 @@ mod entry {
         )
     }
 
-    /// What a post kept, drawn back into New agent beside what happened.
-    fn kept(name: &str, appliance: &str, words: String, retire: bool) -> Kept {
+    /// **What a post kept, drawn back into New agent beside what happened**,
+    /// and **every refused Finalize logged** (the Planner's brief of
+    /// 2026-11-28, part 2): one line at warn naming the refusal, the admin
+    /// who posted, the agent's name as typed and the words the page draws,
+    /// the line's own time saying when, so a refusal can be read afterwards
+    /// whatever the page showed. Never the code. Every refusal New agent
+    /// draws passes here, and nothing else does.
+    fn kept(
+        session: &Session,
+        refusal: &str,
+        name: &str,
+        appliance: &str,
+        words: String,
+        retire: bool,
+    ) -> Kept {
+        tracing::warn!(
+            refusal,
+            by = %session.person_id,
+            name = ?name,
+            words = ?words,
+            "New agent's Finalize was refused"
+        );
         Kept {
             name: name.to_owned(),
             appliance: appliance.to_owned(),
@@ -835,18 +855,23 @@ mod entry {
     ) -> Response {
         let name = match agent_name(ask.name.trim()) {
             Ok(name) => name.to_owned(),
-            Err(why) => return malformed(&store, seams, &headers, &ask, why.to_string()).await,
+            Err(why) => {
+                let words = why.to_string();
+                return malformed(&store, seams, &headers, &ask, "malformed name", words).await;
+            }
         };
         if !is_handle(&ask.appliance) {
-            return malformed(&store, seams, &headers, &ask, NO_APPLIANCE.to_owned()).await;
+            let words = NO_APPLIANCE.to_owned();
+            return malformed(&store, seams, &headers, &ask, "no appliance", words).await;
         }
         let Ok(code) = Code::read(&ask.code) else {
             let words = MALFORMED_APPLIANCE_CODE.to_owned();
-            return malformed(&store, seams, &headers, &ask, words).await;
+            return malformed(&store, seams, &headers, &ask, "malformed code", words).await;
         };
         // **The comparison is never skipped** (Spec 8.2).
         if ask.compared.as_deref() != Some("on") {
-            return malformed(&store, seams, &headers, &ask, NOT_COMPARED.to_owned()).await;
+            let words = NOT_COMPARED.to_owned();
+            return malformed(&store, seams, &headers, &ask, "not compared", words).await;
         }
         let setup_id = match store.mint_key("st").await {
             Ok(setup_id) => setup_id,
@@ -883,13 +908,15 @@ mod entry {
                 }
                 // **A holder never paired is pointed to its own Pair page**,
                 // which New agent lists below the form.
-                let words = if paired {
-                    Refusal::SetupNameHeld(name.clone())
+                let (refusal, words) = if paired {
+                    ("name held", Refusal::SetupNameHeld(name.clone()))
                 } else {
-                    Refusal::SetupNameHeldUnpaired(name.clone())
-                }
-                .to_string();
-                let kept = kept(&name, "", words, false);
+                    (
+                        "name held, unpaired",
+                        Refusal::SetupNameHeldUnpaired(name.clone()),
+                    )
+                };
+                let kept = kept(&session, refusal, &name, "", words.to_string(), false);
                 return first_answer(&store, seams, &session, StatusCode::CONFLICT, kept).await;
             }
             Err(e) => return fault(e),
@@ -903,7 +930,7 @@ mod entry {
             .any(|w| w.handle == ask.appliance)
         {
             let (status, words) = unlisted(&enrollment.listener, &ask.appliance);
-            let kept = kept(&name, "", words.to_owned(), false);
+            let kept = kept(&session, gone(words), &name, "", words.to_owned(), false);
             return first_answer(&store, seams, &session, status, kept).await;
         }
         let listener = enrollment.listener.clone();
@@ -922,7 +949,7 @@ mod entry {
         // fingerprint, which the operator compares with the appliance's
         // unknown line.
         let mut unknown = false;
-        let (status, words, retire, appliance) = match continued.await {
+        let (refusal, status, words, retire, appliance) = match continued.await {
             Ok(Ok(Finalized::Ended(ended))) => match first_words(&ended.outcome, &name) {
                 None => {
                     return (
@@ -934,6 +961,7 @@ mod entry {
                 Some((status, words)) => {
                     unknown = matches!(ended.outcome, Outcome::Unknown(_));
                     (
+                        outcome_refusal(&ended.outcome),
                         status,
                         words,
                         matches!(
@@ -945,6 +973,7 @@ mod entry {
                 }
             },
             Ok(Ok(Finalized::Missed { left })) => (
+                "code missed".to_owned(),
                 StatusCode::CONFLICT,
                 format!(
                     "That code does not match the appliance you chose. {left} {} left on it.",
@@ -953,8 +982,15 @@ mod entry {
                 false,
                 ask.appliance.as_str(),
             ),
-            Ok(Ok(Finalized::Closed)) => (StatusCode::CONFLICT, CLOSED.to_owned(), false, ""),
+            Ok(Ok(Finalized::Closed)) => (
+                "connection closed".to_owned(),
+                StatusCode::CONFLICT,
+                CLOSED.to_owned(),
+                false,
+                "",
+            ),
             Ok(Ok(Finalized::Silent)) => (
+                "appliance silent".to_owned(),
                 StatusCode::SERVICE_UNAVAILABLE,
                 SILENT.to_owned(),
                 false,
@@ -962,12 +998,12 @@ mod entry {
             ),
             Ok(Ok(Finalized::Gone)) => {
                 let (status, words) = unlisted(&listener, &ask.appliance);
-                (status, words.to_owned(), false, "")
+                (gone(words).to_owned(), status, words.to_owned(), false, "")
             }
             Ok(Err(early)) => return early,
             Err(e) => return fault(anyhow::Error::new(e)),
         };
-        let mut kept = kept(&name, appliance, words, retire);
+        let mut kept = kept(&session, &refusal, &name, appliance, words, retire);
         if unknown {
             kept.rows = match store.live_rows_named(&name).await {
                 Ok(rows) => Some(super::rows_of(&rows)),
@@ -989,6 +1025,7 @@ mod entry {
         seams: &Seams,
         headers: &HeaderMap,
         ask: &FinalizeAsk,
+        refusal: &str,
         words: String,
     ) -> Response {
         let session = match admin_session(store, &seams.policy, headers).await {
@@ -1007,8 +1044,33 @@ mod entry {
         } else {
             ""
         };
-        let kept = kept(&name, appliance, words, false);
+        let kept = kept(&session, refusal, &name, appliance, words, false);
         first_answer(store, seams, &session, StatusCode::BAD_REQUEST, kept).await
+    }
+
+    /// The refusal an appliance no longer listed is logged as, by what
+    /// [`unlisted`] said of it.
+    fn gone(words: &str) -> &'static str {
+        if words == WAIT_ENDED {
+            "wait ended"
+        } else {
+            "appliance gone"
+        }
+    }
+
+    /// The refusal an exchange's end is logged as.
+    fn outcome_refusal(outcome: &Outcome) -> String {
+        match outcome {
+            Outcome::Paired { .. } => "paired",
+            Outcome::Refused(refusal) => return format!("appliance told {}", refusal.reason()),
+            Outcome::Request(_) => "appliance told request_refused",
+            Outcome::BoxGone => "appliance gone before its answer",
+            Outcome::Busy => "busy",
+            Outcome::LostWord => "no last word",
+            Outcome::AuthorityGone => "authority gone",
+            Outcome::Unknown(_) => "unknown",
+        }
+        .to_owned()
     }
 
     /// **What New agent says of an appliance no longer listed**: its wait

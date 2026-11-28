@@ -1497,7 +1497,7 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
         "a models disk at least 10 GB larger than the model, and a state disk of at least 10 GiB. The 10 GB margin is guidance. No page judges it.",
         "Each mount path is preset to our default, and the operator may type another. Where a disk already holds data, the script asks whether to keep it or erase it.",
         "GB10 Spark-class devices are hardware we want to deploy to and do not have yet.",
-        "Start the appliance with its two disks attached, and connect to it over SSH as the appliance&#39;s starting user. Its first password is changed at the first login.",
+        "Start the appliance with its two disks attached, and sign in at its console as the appliance&#39;s starting user. Its first password is changed at the first login.",
         "<li>Run <code>weaver-setup</code> with root's authority.</li>",
         "The script prepares and mounts the two disks, marks each card for a plane, and asks for Weaver Web's address on the management plane.",
         "Give it this address:",
@@ -1532,7 +1532,7 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
     let forms = new.matches("<form ").count() - new.matches(r#"action="/sign-out""#).count();
     assert_eq!(forms, 1, "one form: {new}");
     let form_at = new
-        .find(r#"<form method="post" action="/pair" class="stack">"#)
+        .find(r#"<form method="post" action="/pair#finalize" id="finalize" class="stack">"#)
         .unwrap();
     let form = &new[form_at..new[form_at..].find("</form>").unwrap() + form_at];
     for holds in [
@@ -1552,7 +1552,7 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
         for uri in others {
             let other = page(app, uri, session).await;
             assert!(
-                !other.contains(r#"action="/pair""#),
+                !other.contains(r#"action="/pair#finalize""#),
                 "{state}, {uri}: {other}"
             );
             assert!(!other.contains("Finalize the pairing"), "{state}, {uri}");

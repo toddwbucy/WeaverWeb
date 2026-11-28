@@ -1,0 +1,22 @@
+{#- **What a refused Finalize drew**, at the top of New agent's form (the
+    Planner's brief of 2026-11-28, part 2): the reason in a fail status, an
+    alert a reader announces, and on an unknown outcome the register's live
+    rows holding the name. Included by `pair_start.html`. -#}
+{%- if let Some(entered) = entered %}
+<p class="note" role="alert"><span class="status {{ entered.status }}">{{ entered.status }}</span> {{ entered.words }}{% if entered.retire %}: retire it on <a href="/admin/agents">the register</a>, and pair the appliance again{% endif %}</p>
+{%- endif %}
+{%- if let Some(rows) = rows %}
+{%- if rows.is_empty() %}
+<p class="note">The register held no live row named {{ name }} when this page was drawn. The write may still land: load New agent again before dialing anew.</p>
+{%- else %}
+<table>
+  <caption>The register's live rows holding {{ name }}, as read when this page was drawn; a row this write makes may appear a moment later</caption>
+  <thead><tr><th>Agent</th><th>Box</th><th>Gate</th><th>Admin</th><th>State</th></tr></thead>
+  <tbody>
+  {%- for r in rows %}
+  <tr><td class="mono">{{ r.agent_id }}</td><td class="mono">{{ r.box }}</td><td class="mono">{{ r.gate }}</td><td class="mono">{{ r.admin }}</td><td>{{ r.label }}</td></tr>
+  {%- endfor %}
+  </tbody>
+</table>
+{%- endif %}
+{%- endif %}

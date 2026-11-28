@@ -1,0 +1,9 @@
+{% extends "instrument.html" %}
+{% block title %}refused - weaver-web{% endblock %}
+{% block body %}
+{#- The `Origin` check's refusal as a page of no tab, under the masthead
+    (Spec 2.8). -#}
+<h1>Refused at another address</h1>
+{% let expected = refusal.expected.clone() %}{% let sent = &refusal.sent %}
+{%- include "origin_refusal.html" %}
+{% endblock %}

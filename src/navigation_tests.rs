@@ -581,7 +581,8 @@ async fn every_page_declares_its_tab_and_sub_tab() {
             let here = &rest[..rest.find('"').unwrap()];
             seen += 1;
             assert!(
-                !crate::surfaces::tab_of(here).is_empty() || ["sign-in", "enroll"].contains(&here),
+                !crate::surfaces::tab_of(here).is_empty()
+                    || ["sign-in", "enroll", "refused"].contains(&here),
                 "{}: the page `{here}` names no tab",
                 path.display()
             );

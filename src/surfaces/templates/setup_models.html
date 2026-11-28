@@ -113,7 +113,7 @@
     {%- if let Some(missing) = c.missing %}
     <p><span class="status fail">no pick</span> {{ missing }}</p>
     {%- else if let Some(href) = c.header_href %}
-    <div hx-get="{{ href }}" hx-trigger="toggle from:closest details" hx-swap="outerHTML"><p>Its header is read when this opens. Where the read fails, close it and open it again to try once more.</p></div>
+    <div hx-get="{{ href }}" hx-trigger="toggle from:closest details" hx-swap="outerHTML"><p>Its header is read when this opens.</p></div>
     {%- endif %}
   </details>
   {%- endfor %}

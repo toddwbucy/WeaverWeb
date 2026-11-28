@@ -621,7 +621,14 @@ async fn two_parts_show_as_one_choice_with_their_total_size() {
 /// kept so a second fragment reads nothing, and a decoder's form offered
 /// for a model's file. A header past the bound is "not read" and a split
 /// count the names contradict is shown with its reason, neither offering
-/// a pick.
+/// a pick. **A read that fails offers to read again** (the Planner's
+/// review of part 4, 2026-11-28): its fragment carries a "Read again"
+/// button asking the same header, which answers in its place; a read that
+/// stands offers none.
+///
+/// Perturbation: leave the way to read again off a failed read, and the
+/// long header's fragment has none; offer it on every read, and the split
+/// header's has one.
 #[tokio::test]
 async fn the_header_is_read_by_range_and_one_past_the_bound_is_not_read() {
     let Some((rig, fake, _, _cache)) = rig(true).await else {
@@ -645,6 +652,10 @@ async fn the_header_is_read_by_range_and_one_past_the_bound_is_not_read() {
         "{fragment}"
     );
     assert!(!fragment.contains(r#"name="scale""#), "{fragment}");
+    assert!(
+        !fragment.contains("Read again"),
+        "a read that stands: {fragment}"
+    );
     assert_eq!(
         *fake.header_reads.lock().unwrap(),
         [(
@@ -667,6 +678,28 @@ async fn the_header_is_read_by_range_and_one_past_the_bound_is_not_read() {
     );
     assert!(!long.contains("<form"), "{long}");
     assert!(!long.contains("Q4_K_M"), "{long}");
+    let lead = r#"<button type="button" hx-get=""#;
+    let at = long.find(lead).expect("a failed read offers to read again");
+    let again = &long[at + lead.len()..];
+    let (href, rest) = again.split_once('"').unwrap();
+    assert!(
+        rest.starts_with(
+            r#" hx-target="closest .header-facts" hx-swap="outerHTML">Read again</button>"#
+        ),
+        "{long}"
+    );
+    let href = href.replace("&#38;", "&");
+    assert!(
+        href.starts_with(&format!("/setup/{setup}/models/header?repository="))
+            && href.contains(&format!("&commit={COMMIT}&choice=long.gguf")),
+        "{href}"
+    );
+    let reread = part(&rig, &href, &ada).await;
+    assert!(
+        reread.contains("not read: the header runs past the read's bound of 16 MiB")
+            && reread.contains("Read again"),
+        "the same ask, answered in its place: {reread}"
+    );
 
     let mismatch = part(
         &rig,
@@ -1877,14 +1910,16 @@ async fn the_adapters_step_follows_the_models_and_the_downloads_show_their_progr
 /// Planner's review of part 4, 2026-11-28; Spec 6.2): the pulls fragment
 /// answers 286, which htmx swaps and polls no more after, where there is no
 /// pull, where every pull has ended failed or cancelled, and where the
-/// decoder's pull is verified and its identity read; it answers 200 while a
-/// pull runs and while a verified decoder's identity is still owed. A
-/// header's read is tried again at the next opening, so a read that failed
-/// never stays the waiting sentence for good.
+/// decoder's pull is verified and its identity read, or still unread 30
+/// minutes after its download ended, which the fragment says with the word
+/// to reload; it answers 200 while a pull runs and while a verified
+/// decoder's identity is still owed inside that bound. A header's read
+/// that drew nothing is tried again at the next opening.
 ///
 /// Perturbation: answer 200 always, and the first case fails; answer 286
-/// once no pull runs whatever the identity, and the owed case fails; put
-/// `once` back on the header's trigger, and the last assertion fails.
+/// once no pull runs whatever the identity, and the owed case fails; drop
+/// the bound, and the stalled case answers 200; put `once` back on the
+/// header's trigger, and the last assertion fails.
 #[tokio::test]
 async fn the_downloads_poll_stops_once_nothing_on_it_can_move() {
     let Some((rig, _fake, _, _cache)) = rig(true).await else {
@@ -1941,6 +1976,20 @@ async fn the_downloads_poll_stops_once_nothing_on_it_can_move() {
     )
     .await;
     assert_eq!(status_of().await, StatusCode::OK, "owed again");
+    set(
+        s,
+        &pull,
+        "UPDATE model_pull SET finished_at = now() - interval '31 minutes' WHERE pull_id = $1",
+    )
+    .await;
+    let (status, _, stalled) = send_as(&rig.app, "GET", &pulls, None, &ada).await;
+    assert_eq!(status.as_u16(), 286, "past the hash's bound: {stalled}");
+    assert!(
+        stalled.contains(
+            "not read: its hash has not finished in the 30 minutes since the download ended; reload this page to read it again"
+        ),
+        "{stalled}"
+    );
     sqlx::query(
         "INSERT INTO base_identity (repository, commit_id, choice, blake3, bytes, pull_id) \
          SELECT repository, commit_id, choice, $2, 1, pull_id FROM agent_setup_model \

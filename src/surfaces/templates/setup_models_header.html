@@ -1,6 +1,8 @@
 {#- One choice's header (Spec 6.2), a fragment: the facts read, each "not
     read" where the header does not carry it, and the pick's form where the
-    header's general.type admits a role and the page offers a pick. -#}
+    header's general.type admits a role and the page offers a pick. A read
+    that failed says why and offers the same read again, which replaces
+    this fragment with its answer. -#}
 <div class="header-facts">
 {%- if let Some(f) = facts %}
 <table>
@@ -17,6 +19,9 @@
 {%- endif %}
 {%- if let Some(why) = reason %}
 <p><span class="status fail">no pick</span> {{ why }}</p>
+{%- endif %}
+{%- if let Some(href) = again %}
+<p><button type="button" hx-get="{{ href }}" hx-target="closest .header-facts" hx-swap="outerHTML">Read again</button></p>
 {%- endif %}
 {%- if let Some(role) = role %}
 <form method="post" action="/setup/{{ setup_id }}/models" class="field">

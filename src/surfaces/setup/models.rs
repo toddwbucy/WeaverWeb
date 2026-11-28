@@ -616,12 +616,12 @@ async fn listing(
         .iter()
         .map(|c| ChoiceView {
             header_href: (readable && c.missing.is_none()).then(|| {
-                format!(
-                    "/setup/{setup_id}/models/header?repository={}&commit={}&choice={}&role={}",
-                    query(&repo.to_string()),
-                    model.commit,
-                    query(&c.name),
-                    Role::of_page(here).as_str()
+                header_href(
+                    setup_id,
+                    &repo.to_string(),
+                    &model.commit,
+                    &c.name,
+                    Some(Role::of_page(here)),
                 )
             }),
             name: c.name.clone(),
@@ -657,6 +657,28 @@ pub(super) struct HeaderAsk {
     role: Option<String>,
 }
 
+/// **One choice's header, as the page and a failed read ask it**: the
+/// repository, the commit, the choice and the role of the page that asked,
+/// where one is named.
+fn header_href(
+    setup_id: &str,
+    repository: &str,
+    commit: &str,
+    choice: &str,
+    role: Option<Role>,
+) -> String {
+    let mut href = format!(
+        "/setup/{setup_id}/models/header?repository={}&commit={commit}&choice={}",
+        query(repository),
+        query(choice),
+    );
+    if let Some(role) = role {
+        href.push_str("&role=");
+        href.push_str(role.as_str());
+    }
+    href
+}
+
 #[derive(Template)]
 #[template(path = "setup_models_header.html")]
 struct HeaderFragment {
@@ -672,6 +694,10 @@ struct HeaderFragment {
     role: Option<&'static str>,
     /// Whether that role is the adapter's, whose form asks the scale.
     adapter: bool,
+    /// **The way to read again**, where the read failed (the Planner's
+    /// review of part 4, 2026-11-28): the same ask, so a read that was not
+    /// done, found nothing or met no answer is tried again on a click.
+    again: Option<String>,
 }
 
 /// The choice a header's fragment or a pick names: a path of a repository
@@ -731,7 +757,15 @@ async fn header(
         reason: None,
         role: None,
         adapter: false,
+        again: None,
     };
+    let again = header_href(
+        &setup.setup_id,
+        &fragment.repository,
+        &ask.commit,
+        &ask.choice,
+        wanted,
+    );
     match seams
         .headers
         .read(
@@ -765,10 +799,12 @@ async fn header(
         }
         Ok(HeaderRead::NotRead(why) | HeaderRead::NotFound(why)) => {
             fragment.reason = Some(format!("{NOT_READ}: {why}"));
+            fragment.again = Some(again);
         }
         Err(e) => {
             tracing::warn!("a header could not be read: {e:#}");
             fragment.reason = Some(format!("{NOT_READ}: Hugging Face did not answer: {e:#}"));
+            fragment.again = Some(again);
         }
     }
     match fragment.render() {
@@ -845,11 +881,18 @@ struct PullsView {
     total: Progress,
     identity: IdentityView,
     /// **Whether nothing on the fragment can move any more**: no pull
-    /// runs, and no verified decoder's identity is still owed by its hash.
+    /// runs, and no verified decoder's identity is still owed by its hash
+    /// inside [`HASH_WAIT_MINUTES`] of its download's end.
     /// The fragment then answers 286, which stops htmx's poll (the
     /// Planner's review of part 4, 2026-11-28).
     settled: bool,
 }
+
+/// **How long a verified decoder's identity is waited for** (the Planner's
+/// review of part 4, 2026-11-28): the hasher retries a failure and records
+/// none, so past this bound since the download ended the fragment says the
+/// hash has not finished and to reload, and stops the poll.
+const HASH_WAIT_MINUTES: i64 = 30;
 
 /// **The status that stops an htmx poll**, answered with the fragment once
 /// it is settled; htmx swaps it as any success and polls no more.
@@ -871,9 +914,13 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
     let rows = store.setup_models(setup_id).await?;
     let mut pulls = Vec::new();
     let (mut all_done, mut all_size) = (0u64, 0u64);
+    let mut decoder_ended = None;
     for row in &rows {
         let files = store.pull_files(&row.pull_id).await?;
         let pull = store.pull(&row.pull_id).await?;
+        if row.role == "decoder" {
+            decoder_ended = pull.as_ref().and_then(|p| p.finished_at);
+        }
         let done_of = |f: &crate::store::model_pull::PullFile| {
             u64::try_from(f.bytes_done).unwrap_or(0).min(f.file.size)
         };
@@ -906,6 +953,9 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
         });
     }
     let decoder = rows.iter().find(|r| r.role == "decoder");
+    let stalled = decoder_ended.is_some_and(|ended| {
+        chrono::Utc::now() - ended > chrono::Duration::minutes(HASH_WAIT_MINUTES)
+    });
     let identity = match decoder {
         None => IdentityView {
             blake3: None,
@@ -923,7 +973,11 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
             },
             None => IdentityView {
                 blake3: None,
-                not_read: Some(if d.pull_state == "verified" {
+                not_read: Some(if d.pull_state == "verified" && stalled {
+                    format!(
+                        "{NOT_READ}: its hash has not finished in the {HASH_WAIT_MINUTES} minutes since the download ended; reload this page to read it again"
+                    )
+                } else if d.pull_state == "verified" {
                     format!("{NOT_READ}: its hash runs")
                 } else {
                     format!(
@@ -935,7 +989,9 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
             },
         },
     };
-    let owed = decoder.is_some_and(|d| d.pull_state == "verified") && identity.blake3.is_none();
+    let owed = decoder.is_some_and(|d| d.pull_state == "verified")
+        && identity.blake3.is_none()
+        && !stalled;
     let settled = rows.iter().all(|r| r.pull_state != "running") && !owed;
     Ok(PullsView {
         pulls,

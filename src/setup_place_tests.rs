@@ -9,6 +9,7 @@
 //! conforms: web-a-setup-with-no-adapters-pick-confirms-a-tuple-with-none
 //! conforms: web-a-tuples-adapter-members-are-all-present-or-all-absent
 //! conforms: web-describes-laying-names-an-adapter-only-where-the-tuple-holds-one
+//! conforms: web-setup-describe-sends-ssh-keys-always-empty
 //!
 //! The placement and confirm pages (Spec 6.2, `src/surfaces/setup/placement.rs`,
 //! `src/surfaces/setup/confirm.rs`, `src/store/tuple.rs`), against the models
@@ -1371,7 +1372,12 @@ async fn a_setup_with_no_adapter_confirms_a_tuple_and_a_laying_with_none() {
 /// blobs, the models drive's need counting a blob once per repository, no
 /// laying before Confirm, and after it the laying members of the confirmed
 /// tuple. The link is set at the schema, as the pairing's write leaves it.
-/// The pairing's own path is `enrollment_tests`'.
+/// The pairing's own path is `enrollment_tests`'. **Its `ssh_keys` is
+/// always empty** (the Planner's brief of 2026-11-28, part 5): a key row
+/// the retired SSH keys page left in the table is never sent.
+///
+/// Perturbation: read the table's keys into the member again, and the
+/// held row is answered.
 #[tokio::test]
 async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirmed() {
     let reported = Arc::new(Reported::default());
@@ -1407,11 +1413,25 @@ async fn setup_describe_answers_the_picks_their_need_and_the_laying_once_confirm
     .execute(&s.pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO operator_ssh_key (key_id, line, fingerprint, added_by) \
+         SELECT 'sk-00000000000000a1', 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 held', $1, person_id \
+         FROM person LIMIT 1",
+    )
+    .bind(format!("SHA256:{}", "A".repeat(43)))
+    .execute(&s.pool)
+    .await
+    .unwrap();
     let unpicked = s
         .described(&karl, &admin_fingerprint)
         .await
         .unwrap()
         .unwrap();
+    assert!(
+        unpicked.ssh_keys.is_empty(),
+        "no SSH key goes down: {:?}",
+        unpicked.ssh_keys
+    );
     assert_eq!(
         (unpicked.models, unpicked.bytes, unpicked.laying),
         (None, 0, None)

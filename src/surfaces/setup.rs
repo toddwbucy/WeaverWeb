@@ -7,6 +7,7 @@
 //! conforms: web-new-agent-holds-what-an-agent-needs-the-steps-at-the-appliance-and-one-form-with-no-click-before-them
 //! conforms: web-new-agent-gives-weaver-webs-management-address-and-never-the-data-doors-and-says-so-where-one-door-serves-both-planes
 //! conforms: web-new-agent-lists-each-open-setup-not-paired-with-a-link-to-its-own-pair-page
+//! conforms: web-the-retired-screens-answer-not-found
 //!
 //! **New agent, and Declare's path** (Spec 6.2, 8.2), an admin's, the
 //! server-wide admin grant. **New agent is the first page of stage 1**
@@ -225,7 +226,6 @@ pub fn routes(seams: Seams) -> Router<Store> {
         .merge(models::routes(&seams))
         .merge(placement::routes(&seams))
         .merge(confirm::routes(&seams))
-        .merge(crate::surfaces::ssh_key::routes(seams.policy.clone()))
 }
 
 fn when(at: chrono::DateTime<chrono::Utc>) -> String {
@@ -790,7 +790,6 @@ struct DirectoriesPage {
     admin: bool,
     chrome: super::Chrome,
     frame: Frame,
-    keys: Vec<crate::surfaces::ssh_key::KeyView>,
     /// The console's `model_cache`, where set.
     model_cache: Option<String>,
     /// The directories as mounted, from the report, judged (Spec 6.2).
@@ -890,9 +889,8 @@ async fn page(
     let who = session.name.clone();
     let rendered = match at {
         Page::Directories => {
-            let (keys, need, reports) = match async {
+            let (need, reports) = match async {
                 Ok::<_, anyhow::Error>((
-                    crate::surfaces::ssh_key::held(&store).await?,
                     need(&store, setup_id).await?,
                     store.reports(seams.boxes.as_ref(), setup_id).await?,
                 ))
@@ -909,7 +907,6 @@ async fn page(
                 admin: true,
                 chrome,
                 frame,
-                keys,
                 model_cache: seams
                     .cfg
                     .model_cache

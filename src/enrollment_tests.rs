@@ -2934,14 +2934,9 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         report.contains("No model is picked, so its free space is not judged."),
         "{report}"
     );
-    // The SSH key page opens in a new tab, so the setup stays open (the
-    // operator's walk of 2026-11-19).
-    assert!(
-        shown.contains(
-            r#"<a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab, so this setup stays open here."#
-        ),
-        "{shown}"
-    );
+    // No SSH key goes down: the appliance ships with SSH off (the Planner's
+    // brief of 2026-11-28, part 5).
+    assert!(!shown.contains("/admin/ssh-key"), "{shown}");
     assert!(crate::setup_tests::walk(&shown).is_empty());
 }
 

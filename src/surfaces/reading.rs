@@ -1,5 +1,5 @@
 //! conforms: web-reading-an-agent-takes-a-grant-on-it
-//! conforms: web-the-agent-page-leads-on-to-record-and-an-admin-back-to-its-declaration
+//! conforms: web-the-agent-page-leads-on-to-record-and-links-no-retired-screen
 //! conforms: web-the-agents-list-is-the-agents-tabs-one-page
 //!
 //! **Reading an agent** (design sections 6 and 9; Spec 2.12 and 2.13; act
@@ -114,41 +114,6 @@ fn stages(links: &[(u8, String)]) -> Vec<StageView> {
                 .map(|(_, href)| href.clone()),
         })
         .collect()
-}
-
-/// **The way back to the agent's declaration**, an admin's alone, since
-/// the declaration screen is (Spec 2.13, 6.1): the declaration saved under
-/// the agent's name, or a new one where none is.
-pub(crate) struct DeclaredLink {
-    pub(crate) href: String,
-    pub(crate) words: String,
-}
-
-impl DeclaredLink {
-    /// The way back for what the head lookup read: the head, a new
-    /// declaration where none is saved, or the declarations where the
-    /// lookup failed, since "declare one" would state what was not read.
-    pub(crate) fn of(name: &str, head: Head<'_>) -> DeclaredLink {
-        match head {
-            Head::Unread => DeclaredLink {
-                href: "/declarations".to_owned(),
-                words: format!(
-                    "whether a declaration is saved under the name {name} could not be read just now: the declarations"
-                ),
-            },
-            Head::Saved(saved) => DeclaredLink {
-                href: format!("/declarations/{}", saved.de),
-                words: format!(
-                    "the declaration saved under the name {name}, version {}",
-                    saved.version
-                ),
-            },
-            Head::NoneSaved => DeclaredLink {
-                href: "/declarations/new".to_owned(),
-                words: format!("no declaration is saved under the name {name}: declare one"),
-            },
-        }
-    }
 }
 
 /// What is left, said at the rail's end: the current stage of the eight
@@ -587,8 +552,6 @@ struct AgentPage {
     /// The stage rail and what is left.
     stages: Vec<StageView>,
     left: String,
-    /// The way back to the agent's declaration, an admin's alone.
-    declared: Option<DeclaredLink>,
     /// **The page's wait for an ask's answer**, the silence bound in
     /// seconds, which the asking lines name.
     wait: u64,
@@ -1115,10 +1078,13 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
     }
     let head = Head::of(&named);
     let declaration = DeclarePane::of(&store, &row, head, admin, &session.person_id).await;
-    let declared = admin.then(|| DeclaredLink::of(&row.name, head));
-    let links: Vec<(u8, String)> = match &declared {
-        Some(link) => vec![(1, link.href.clone()), (2, "/admin/agents".to_owned())],
-        None => Vec::new(),
+    // **No screen writes a declaration now** (the Planner's brief of
+    // 2026-11-28, part 5): the rail links Provision alone, an admin's, and
+    // the Agents list opens the agent's declaration on the setup pages.
+    let links: Vec<(u8, String)> = if admin {
+        vec![(2, "/admin/agents".to_owned())]
+    } else {
+        Vec::new()
     };
     let can_ack = roles.iter().any(|r| r == "operator");
     let carries = |verb: &str| granted.contains(verb) && ceiling.iter().any(|c| c == verb);
@@ -1207,7 +1173,6 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         prompt,
         stages: stages(&links),
         left: left(),
-        declared,
         wait: seams.asker.silence().as_secs(),
         declaration,
     };

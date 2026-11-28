@@ -19,8 +19,9 @@
 //! so.
 //!
 //! **Access** (the Planner's line, which the operator rules by the merge):
-//! every grant holder of the agent sees the parts; the link to the
-//! declaration screen stays an admin's, as the screen does; the prompt is
+//! every grant holder of the agent sees the parts; no reader is linked to
+//! the declaration screen, retired on 2026-11-28, and the pane reads the
+//! rows it saved, read only; the prompt is
 //! shown by its length in characters, its text never on this page, and its
 //! digest to an admin alone: a security review found on 2026-11-13 that an
 //! unkeyed digest handed to a reader who may not read the text lets them
@@ -88,8 +89,22 @@ pub struct DeclarePane {
     pub truth: String,
     /// The parts, each with how it stands against the agent's report.
     pub parts: Vec<PartRow>,
-    /// The way to a new declaration, an admin's alone, where none is saved.
-    pub declare: bool,
+}
+
+/// **No screen writes a declaration now** (the Planner's brief of
+/// 2026-11-28, part 5): the pane reads the rows saved before the screen
+/// retired, read only, and says so where it finds none.
+const NO_SCREEN: &str = "The declaration screen that saved declarations is retired, so none \
+     is saved now: an agent's declaration is its setup, which the Agents list opens.";
+
+/// An authored row's author as the pane names it.
+fn author_words(author: crate::store::identity::Author) -> String {
+    use crate::store::identity::Author;
+    match author {
+        Author::Person { name, .. } => name,
+        Author::Claim(claim) => format!("{claim} (a claim)"),
+        Author::Absent => "nobody named".to_owned(),
+    }
 }
 
 /// The other rows' sentence where a declaration is saved under the name.
@@ -106,8 +121,6 @@ pub struct SavedView {
     pub version: i64,
     pub saved_at: String,
     pub author: String,
-    /// The declaration screen's page of the head, an admin's alone.
-    pub href: Option<String>,
 }
 
 /// One part of the declaration.
@@ -163,7 +176,7 @@ impl DeclarePane {
         };
         let author = match head {
             Head::Saved(saved) => match store.author(saved.author.as_deref()).await {
-                Ok(author) => Some(super::declarations::author_words(author)),
+                Ok(author) => Some(author_words(author)),
                 Err(e) => {
                     tracing::error!(agent = %row.agent_id.as_str(), "the Declare pane could not read the head's author: {e:#}");
                     None
@@ -197,9 +210,11 @@ impl DeclarePane {
                     others,
                     others_unread,
                     others_lead: OTHERS_NONE_SAVED,
-                    truth: format!("No declaration is saved under the name {}.", row.name),
+                    truth: format!(
+                        "No declaration is saved under the name {}. {NO_SCREEN}",
+                        row.name
+                    ),
                     parts: Vec::new(),
-                    declare: admin,
                 };
             }
             Head::Unread => {
@@ -214,7 +229,6 @@ impl DeclarePane {
                         row.name
                     ),
                     parts: Vec::new(),
-                    declare: false,
                 };
             }
         };
@@ -222,7 +236,6 @@ impl DeclarePane {
             version: saved.version,
             saved_at: saved.saved_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
             author: author.unwrap_or_else(|| AUTHOR_UNREAD.to_owned()),
-            href: admin.then(|| format!("/declarations/{}", saved.de)),
         };
         // The head is read as the declaration screen reads a saved row, a
         // member a row keeps from an earlier grammar discarded (Spec 6.1's
@@ -243,7 +256,6 @@ impl DeclarePane {
                         row.name, saved.version
                     ),
                     parts: Vec::new(),
-                    declare: false,
                 };
             }
         };
@@ -285,7 +297,6 @@ impl DeclarePane {
             others_lead: OTHERS_SAME,
             truth,
             parts: parts(&document, report.as_ref(), admin),
-            declare: false,
         }
     }
 }

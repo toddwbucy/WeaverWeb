@@ -1,5 +1,3 @@
-//! conforms: web-a-save-from-a-row-not-its-lineages-head-is-refused
-//! conforms: web-no-two-lineages-share-a-name
 //! conforms: web-a-declaration-rows-authored-half-never-changes
 //! conforms: web-a-row-saved-with-the-withdrawn-placement-reads-without-it
 //!

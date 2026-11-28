@@ -1,6 +1,7 @@
 //! conforms: web-setup-describe-answers-replacement-true-after-a-replace-box-write-alone
 //! conforms: web-the-setup-keeps-the-latest-report-of-each-stage-verbatim
 //! conforms: web-describes-laying-names-an-adapter-only-where-the-tuple-holds-one
+//! conforms: web-setup-describe-sends-ssh-keys-always-empty
 //!
 //! **The setup connection's two asks at the store** (Spec 8.3): what `admin-con
 //! setup describe` is answered, and where `admin-con setup report` lands. Each
@@ -19,8 +20,8 @@ use sqlx::Row;
 use crate::hugging_face::cache::snapshot_path;
 use crate::hugging_face::{RepoFile, RepoId};
 use crate::link::frames::{
-    Described, DescribedAdapter, DescribedFile, DescribedKey, DescribedLaying, DescribedModel,
-    REPORT_BOUND, Refusal, Stage,
+    Described, DescribedAdapter, DescribedFile, DescribedLaying, DescribedModel, REPORT_BOUND,
+    Refusal, Stage,
 };
 use crate::store::Store;
 use crate::store::key::AgentId;
@@ -160,7 +161,6 @@ impl Store {
             let _ = go.await;
         }
         let confirmed = Self::deployment_tuple_on(&mut tx, &setup_id).await?;
-        let held_keys = Self::ssh_keys_on(&mut tx).await?;
         tx.commit().await?;
 
         let laying = match confirmed {
@@ -182,13 +182,11 @@ impl Store {
                 })
             }
         };
-        let ssh_keys = held_keys
-            .into_iter()
-            .map(|k| DescribedKey {
-                key: k.line,
-                fingerprint: k.fingerprint,
-            })
-            .collect();
+        // **No SSH key goes down** (the Planner's brief of 2026-11-28, part
+        // 5): the appliance ships with SSH off and the SSH keys page is
+        // retired, so the member stands, for its reader's shape, and is
+        // always empty.
+        let ssh_keys = Vec::new();
         Ok(Ok(Described {
             agent,
             agent_id: agent_id.as_str().to_owned(),

@@ -5,8 +5,9 @@
 //! in each of its three states, each reported member's verdict, the parts
 //! the agent never reports, the prompt by its length (its digest to an
 //! admin alone), the other live rows of the name as far as the reader may
-//! see, the declaration screen's link an admin's alone, and the pane failing by
-//! itself where its head does not read or a read inside it fails. Each test runs on a
+//! see, no link to the retired declaration screen for any reader, and the
+//! pane failing by itself where its head does not read or a read inside it
+//! fails. Each test runs on a
 //! store of its own. No name, artifact or digest here is a real deployment's.
 
 use axum::http::StatusCode;
@@ -131,44 +132,50 @@ async fn setting() -> Option<(crate::agents_tests::Rig, String, String, String)>
 }
 
 /// **With no declaration saved under the name, the pane says so**, for
-/// every reader, with no parts; an admin alone is offered a new one.
+/// every reader, with no parts, and says that no screen writes one now
+/// (the Planner's brief of 2026-11-28, part 5): no reader is offered a new
+/// one.
+///
+/// Perturbation: draw the retired screen's link for an admin again, and the
+/// admin's pane fails the last assertion.
 #[tokio::test]
 async fn with_no_declaration_saved_the_pane_says_so() {
     let Some((rig, ada, bea, karl)) = setting().await else {
         return;
     };
-    let p = pane(&page_of(&rig.app, &karl, &bea).await);
-    assert_eq!(
-        said(&p, "truth").as_deref(),
-        Some("No declaration is saved under the name karl."),
-        "{p}"
-    );
-    assert!(parts(&p).is_empty() && said(&p, "saved").is_none(), "{p}");
-    assert!(
-        !p.contains("/declarations"),
-        "a person is offered no screen: {p}"
-    );
-    let p = pane(&page_of(&rig.app, &karl, &ada).await);
-    assert!(
-        p.contains(r#"<a href="/declarations/new">Declare one</a>"#),
-        "{p}"
-    );
+    for session in [&bea, &ada] {
+        let p = pane(&page_of(&rig.app, &karl, session).await);
+        assert_eq!(
+            said(&p, "truth").as_deref(),
+            Some(
+                "No declaration is saved under the name karl. The declaration screen that \
+                 saved declarations is retired, so none is saved now: an agent's \
+                 declaration is its setup, which the Agents list opens."
+            ),
+            "{p}"
+        );
+        assert!(parts(&p).is_empty() && said(&p, "saved").is_none(), "{p}");
+        assert!(
+            !p.contains("/declarations"),
+            "no reader is offered a screen: {p}"
+        );
+    }
 }
 
 /// **A saved declaration with no load shows its parts as declared**: the
 /// head named by its version, each part the agent reports marked as having
-/// no load beside it and each it never reports marked so; the screen's link
-/// an admin's alone.
+/// no load beside it and each it never reports marked so; the head read
+/// only, with no link to the retired screen for any reader.
 #[tokio::test]
 async fn a_saved_declaration_with_no_load_shows_its_parts() {
     let Some((rig, ada, bea, karl)) = setting().await else {
         return;
     };
-    let first = save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
-    let head = save(
-        &rig.app,
+    let first = save(rig.store(), &ada, None, posted(&[], &[])).await;
+    save(
+        rig.store(),
         &ada,
-        &format!("/declarations/{first}"),
+        Some(&first),
         posted(&[("sampler.seed", "7")], &[]),
     )
     .await;
@@ -213,10 +220,14 @@ async fn a_saved_declaration_with_no_load_shows_its_parts() {
     let (gpu, against) = part(&rows, "SPU box 1, its GPU requirement");
     assert!(gpu.contains("card-0") && against == "not reported by the agent");
     let p = pane(&page_of(&rig.app, &karl, &ada).await);
+    let saved = said(&p, "saved").expect("the head named");
     assert!(
-        p.contains(&format!(r#"href="/declarations/{head}""#)),
-        "{p}"
+        saved.contains(
+            "It was saved on the declaration screen, now retired, and reads here as saved."
+        ),
+        "{saved}"
     );
+    assert!(!p.contains("/declarations"), "an admin has no link: {p}");
 }
 
 /// **A load whose source the row does not name is set beside nothing**: a
@@ -228,7 +239,7 @@ async fn a_load_whose_source_the_row_does_not_name_is_set_beside_nothing() {
     let Some((rig, ada, bea, karl)) = setting().await else {
         return;
     };
-    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    save(rig.store(), &ada, None, posted(&[], &[])).await;
     sqlx::query(
         "UPDATE agent SET tuple = $1, tuple_source = NULL, tuple_at = now() WHERE agent_id = $2",
     )
@@ -273,7 +284,7 @@ async fn a_load_the_agent_reports_is_set_beside_the_head() {
     let Some((rig, ada, bea, karl)) = setting().await else {
         return;
     };
-    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    save(rig.store(), &ada, None, posted(&[], &[])).await;
     load(rig.store(), &karl, show_of("decoder-b"), "show").await;
     let page = page_of(&rig.app, &karl, &bea).await;
     let p = pane(&page);
@@ -345,13 +356,7 @@ async fn the_prompt_is_shown_by_its_length_and_its_digest_to_an_admin_alone() {
     };
     // One letter of two bytes, so a length in bytes would read 16.
     let prompt = "Answer as K\u{e4}rl.";
-    save(
-        &rig.app,
-        &ada,
-        "/declarations",
-        posted(&[("prompt", prompt)], &[]),
-    )
-    .await;
+    save(rig.store(), &ada, None, posted(&[("prompt", prompt)], &[])).await;
     let digest: String = Sha256::digest(prompt.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -464,7 +469,7 @@ async fn the_other_rows_claim_only_what_was_read_of_the_head() {
         "{others}"
     );
 
-    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    save(rig.store(), &ada, None, posted(&[], &[])).await;
     let others = said(&pane(&page_of(&rig.app, &karl, &ada).await), "others")
         .expect("an admin sees the other row");
     assert!(
@@ -485,7 +490,7 @@ fn render(declaration: &DeclarePane) -> String {
 /// (the Planner's read of 2026-11-13): a row saved by a newer build and read
 /// by an older one leaves the agent page standing, Run's panes with it. The
 /// pane says the head does not read, names its version, shows no parts, and
-/// offers the screen's link to an admin alone.
+/// links no retired screen.
 #[tokio::test]
 async fn a_head_that_does_not_read_fails_in_the_pane_alone() {
     let Some((rig, ada, bea, karl)) = setting().await else {
@@ -503,7 +508,7 @@ async fn a_head_that_does_not_read_fails_in_the_pane_alone() {
     .execute(&s.pool)
     .await
     .unwrap();
-    for (session, admin) in [(&bea, false), (&ada, true)] {
+    for session in [&bea, &ada] {
         let page = page_of(&rig.app, &karl, session).await;
         assert!(page.contains(r#"id="run""#), "Run's panes stand: {page}");
         let p = pane(&page);
@@ -516,11 +521,7 @@ async fn a_head_that_does_not_read_fails_in_the_pane_alone() {
             "{p}"
         );
         assert!(parts(&p).is_empty(), "{p}");
-        assert_eq!(
-            p.contains(r#"href="/declarations/de-00000000000000aa""#),
-            admin,
-            "the screen's link is an admin's alone: {p}"
-        );
+        assert!(!p.contains("/declarations"), "no screen's link: {p}");
     }
 }
 
@@ -577,15 +578,14 @@ async fn a_head_saved_with_the_withdrawn_placement_reads_in_the_pane() {
 /// **A read that fails inside the pane is stated there**, never an error
 /// for the page: the head lookup, the other rows of the name and the head's
 /// author each read as unread and said so in the pane, which shows nothing
-/// it did not read; an admin's way back then leads to the declarations,
-/// never to a new one.
+/// it did not read, and offers no new one.
 #[tokio::test]
 async fn a_read_that_fails_inside_the_pane_is_stated_there() {
     let Some((rig, ada, _, karl)) = setting().await else {
         return;
     };
     let s = rig.store();
-    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    save(rig.store(), &ada, None, posted(&[], &[])).await;
     let row = s.agent(&karl.parse().unwrap()).await.unwrap().unwrap();
     let saved = s.declaration_named("karl").await.unwrap().unwrap();
 
@@ -596,7 +596,7 @@ async fn a_read_that_fails_inside_the_pane_is_stated_there() {
         "{p}"
     );
     assert!(
-        parts(&p).is_empty() && said(&p, "saved").is_none() && !p.contains("Declare one"),
+        parts(&p).is_empty() && said(&p, "saved").is_none() && !p.contains("/declarations"),
         "an unread head shows nothing and offers no new one: {p}"
     );
     assert_eq!(
@@ -618,19 +618,11 @@ async fn a_read_that_fails_inside_the_pane_is_stated_there() {
         "{p}"
     );
     assert!(!parts(&p).is_empty() && said(&p, "others").is_none(), "{p}");
-
-    let back = crate::surfaces::reading::DeclaredLink::of("karl", Head::Unread);
-    assert_eq!(back.href, "/declarations");
-    assert_eq!(
-        back.words,
-        "whether a declaration is saved under the name karl could not be read just now: the declarations"
-    );
 }
 
 /// **A head lookup that fails leaves the agent page standing**: the page
 /// answers with Run's panes, the pane says whether a declaration is saved
-/// could not be read, and an admin's way back and the rail's Declare lead
-/// to the declarations, never to a new one. The lookup is made to fail on
+/// could not be read, and nothing links a retired screen. The lookup is made to fail on
 /// this test's own store by renaming a column it reads, which no other
 /// read of the page touches.
 #[tokio::test]
@@ -639,7 +631,7 @@ async fn a_head_lookup_that_fails_leaves_the_agent_page_standing() {
         return;
     };
     let s = rig.store();
-    save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
+    save(rig.store(), &ada, None, posted(&[], &[])).await;
     sqlx::query("ALTER TABLE declaration RENAME COLUMN corpus_commit TO corpus_commit_away")
         .execute(&s.pool)
         .await
@@ -652,13 +644,9 @@ async fn a_head_lookup_that_fails_leaves_the_agent_page_standing() {
         Some("Whether a declaration is saved under the name karl could not be read just now."),
         "{p}"
     );
-    let back = &page[page.find(r#"<p class="back">"#).expect("a way back")..];
+    assert!(!page.contains(r#"<p class="back">"#), "{page}");
     assert!(
-        back.starts_with(r#"<p class="back">Back, <span class="stage"><b>1</b> Declare</span>: <a href="/declarations">"#),
-        "{back}"
-    );
-    assert!(
-        !page.contains(r#"href="/declarations/new""#),
-        "nothing offers a new declaration on a lookup that failed: {page}"
+        !page.contains("/declarations"),
+        "nothing offers a retired screen on a lookup that failed: {page}"
     );
 }

@@ -87,7 +87,7 @@ pub struct PairArgs {
 #[derive(Debug, clap::Subcommand)]
 pub enum SetupCommand {
     /// The agent, its models, the models drive's need, the laying once
-    /// Confirm stands, and the SSH keys.
+    /// Confirm stands, and an SSH key list that is always empty.
     Describe {
         /// admin-con's config.
         #[arg(long)]

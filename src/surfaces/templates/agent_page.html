@@ -97,12 +97,8 @@
     <p class="asking note read" role="status">Placing the turn through gate-con: its answer is drawn here within the page's wait of {{ wait }} s.</p>
     <div class="answer" id="turn-answer" aria-live="polite"></div>
   </div>
-  {#- The ways on and back (Spec 2.13): The Record, the whole record, and for an
-      admin the declaration saved under the agent's name. -#}
+  {#- The way on (Spec 2.13): The Record, the whole record. -#}
   <p class="next">Onward: <a href="/record">The Record</a>, the record of the whole lifecycle and no stage's own. It is the whole record, not filtered by this agent: a landed run names no register row yet.</p>
-  {%- if let Some(back) = declared %}
-  <p class="back">Back, <span class="stage"><b>1</b> Declare</span>: <a href="{{ back.href }}">{{ back.words }}</a>.</p>
-  {%- endif %}
 </div>
 <div class="stack">
   <section class="pane">

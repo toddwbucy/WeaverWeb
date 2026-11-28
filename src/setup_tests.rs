@@ -822,18 +822,8 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let warned = page(&every.app, &format!("/pair/{}", other.unwrap()), &bea).await;
     assert!(warned.contains("an unspecified address"), "{warned}");
     new_agent.push(("the Pair page, unspecified".to_owned(), warned));
-    let key = crate::ssh_key_tests::line("ssh-ed25519", 1);
-    let (status, _, body) = send_as(
-        &rig.app,
-        "POST",
-        "/admin/ssh-key",
-        Some(form(&[("line", &key)])),
-        &ada,
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     walked.push((
-        "the directories page, a key held".to_owned(),
+        "the directories page, read again".to_owned(),
         page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await,
     ));
 
@@ -933,22 +923,33 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         .collect();
     assert_eq!(unpaired.len(), 1, "the unpaired Pair page is read once");
     assert!(!unpaired[0].contains("Next:"), "{pairing}: {}", unpaired[0]);
-    // The directories page names the model cache where it is set, and the key
-    // by its fingerprint, with the way to change it.
+    // The directories page names the model cache where it is set, and no
+    // SSH key: the appliance ships with SSH off and the SSH keys page is
+    // retired (the Planner's brief of 2026-11-28, part 5).
     let drives = &walked[walked.len() - 1].1;
     assert!(
         drives.contains(&cache.path().display().to_string()),
         "{drives}"
     );
-    assert!(drives.contains(
-        r#"<a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab"#
-    ));
-    // The build page links the declaration screen as built.
+    assert!(!drives.contains("/admin/ssh-key"), "{drives}");
+    assert!(!drives.contains("SSH key"), "{drives}");
+    // The build page says the console does not declare what no setup page
+    // asks yet, and that a load does not need it; it links no retired
+    // screen.
+    let build = &walked
+        .iter()
+        .find(|(uri, _)| uri.ends_with("/build"))
+        .expect("the build page is walked")
+        .1;
     assert!(
-        walked[4]
-            .1
-            .contains(r#"<a href="/declarations">the declaration screen</a>"#)
+        build.contains(
+            "The console does not declare the fields no setup page asks yet, such as the sampler's values, the elections and the prompt. A load does not need them."
+        ),
+        "{build}"
     );
+    for (uri, page) in &walked {
+        assert!(!page.contains(r#"href="/declarations"#), "{uri}: {page}");
+    }
 }
 
 /// **New agent lists each open setup not paired, with a link to its own

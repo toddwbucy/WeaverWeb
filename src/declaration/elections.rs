@@ -1,4 +1,4 @@
-//! conforms: web-the-screens-elections-are-the-agents-as-read
+//! conforms: web-the-documents-elections-are-the-agents-as-read
 //!
 //! **The three elections, as read at the pin** (Spec 6.1, the test of
 //! membership): `turn-context`, a member of `AgentConfig` at the top of the

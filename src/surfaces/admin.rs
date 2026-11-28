@@ -1,6 +1,7 @@
 //! conforms: web-an-admins-write-to-a-person-is-checked-in-its-transaction
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //! conforms: web-an-admin-writes-step-four-is-bounded-from-its-place-until-its-commit-is-sent-never-sends-one-past-it-and-runs-to-its-end-once-it-has
+//! conforms: web-the-retired-screens-answer-not-found
 //!
 //! **An admin's writes to persons** (Spec 2.13; act 11, PR 5a): the page
 //! that lists every person, and enrolling, issuing a token, disabling,
@@ -86,8 +87,7 @@ pub fn routes(policy: Policy, token_hours: u32) -> Router<Store> {
         .route("/admin/persons/disable", post(seamed!(disable, VersionAsk)))
         .route("/admin/persons/enable", post(seamed!(enable, VersionAsk)))
         .route("/admin/persons/rename", post(seamed!(rename, RenameAsk)))
-        .merge(crate::surfaces::grants::routes(seams.policy.clone()))
-        .merge(crate::surfaces::declarations::routes(seams.policy))
+        .merge(crate::surfaces::grants::routes(seams.policy))
 }
 
 #[derive(Clone)]
@@ -113,7 +113,6 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::NoSuchDeclaration
         | Refusal::NotConnected
         | Refusal::NoSuchSetup
-        | Refusal::NoSuchKey
         | Refusal::NoSuchModel
         | Refusal::NoSuchChoice => StatusCode::NOT_FOUND,
         Refusal::Name(_) | Refusal::Scope(_) | Refusal::Vocabulary(_) => StatusCode::BAD_REQUEST,
@@ -137,8 +136,6 @@ pub(crate) fn refused(refusal: &Refusal) -> Response {
         | Refusal::PullNotRunning(_)
         | Refusal::SetupNameHeld(_)
         | Refusal::SetupNameHeldUnpaired(_)
-        | Refusal::KeyHeld
-        | Refusal::KeysFull
         | Refusal::Unpickable(_)
         | Refusal::SetupConfirmed
         | Refusal::Unplaceable(_)

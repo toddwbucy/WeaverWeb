@@ -1,8 +1,9 @@
 //! conforms: web-the-bar-stands-in-two-rows
 //! conforms: web-every-page-declares-its-tab-and-sub-tab
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
-//! conforms: web-the-agent-page-leads-on-to-record-and-an-admin-back-to-its-declaration
+//! conforms: web-the-agent-page-leads-on-to-record-and-links-no-retired-screen
 //! conforms: web-the-agents-list-is-the-agents-tabs-one-page
+//! conforms: web-the-retired-screens-answer-not-found
 //!
 //! The bar and the path (Spec 2.8, 2.13 and 6.1; the operator's words of
 //! 2026-11-13): the bar stands in two rows, three tabs on top (Agents,
@@ -203,7 +204,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
 /// the Agents list, marked on every page of the tab, New agent and the
 /// declaration among them (the operator's words of 2026-11-27); under
 /// Agent Operations, The Record alone, nothing being built there yet; under
-/// IAM, Persons, Grants, Register, Hugging Face, SSH keys and Passkeys. A
+/// IAM, Persons, Grants, Register, Hugging Face and Passkeys. A
 /// person who is not an admin sees the sub-tabs they may open: Agents, The
 /// Record and Passkeys.
 #[tokio::test]
@@ -221,11 +222,9 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
         ("/admin/grants", "Grants"),
         ("/admin/agents", "Register"),
         ("/admin/hugging-face", "Hugging Face"),
-        ("/admin/ssh-key", "SSH keys"),
         ("/passkeys", "Passkeys"),
     ]);
     for (uri, session, tab, want, here) in [
-        ("/declarations", &ada, "Agents", agents.clone(), "Agents"),
         (
             "/record",
             &ada,
@@ -249,11 +248,10 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
             iam.clone(),
             "Hugging Face",
         ),
-        ("/admin/ssh-key", &ada, "IAM", iam.clone(), "SSH keys"),
         ("/agents", &ada, "Agents", agents.clone(), "Agents"),
         ("/pair", &ada, "Agents", agents.clone(), "Agents"),
         ("/admin/agents", &ada, "IAM", iam.clone(), "Register"),
-        ("/passkeys", &bea, "IAM", vec![iam[5].clone()], "Passkeys"),
+        ("/passkeys", &bea, "IAM", vec![iam[4].clone()], "Passkeys"),
     ] {
         let page = page(&rig.app, uri, session).await;
         let (top, second) = bar(&page);
@@ -488,7 +486,6 @@ async fn every_page_declares_its_tab_and_sub_tab() {
     };
     let s = rig.store();
     let (ada_id, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
-    let de = save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
     let (status, _, handover) = send_as(
         &rig.app,
         "POST",
@@ -510,9 +507,6 @@ async fn every_page_declares_its_tab_and_sub_tab() {
 
     let mut pages = Vec::new();
     for uri in [
-        "/declarations",
-        "/declarations/new",
-        &format!("/declarations/{de}"),
         "/admin/agents",
         "/agents",
         &format!("/agents/{karl}"),
@@ -520,11 +514,11 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/admin/persons",
         "/admin/grants",
         "/admin/hugging-face",
-        "/admin/ssh-key",
         "/passkeys",
         "/pair",
         &format!("/pair/{setup}"),
         &format!("/setup/{setup}/models"),
+        &format!("/setup/{setup}/adapter"),
         &format!("/setup/{setup}/directories"),
         &format!("/setup/{setup}/placement"),
         &format!("/setup/{setup}/confirm"),
@@ -532,11 +526,8 @@ async fn every_page_declares_its_tab_and_sub_tab() {
     ] {
         pages.push((uri.to_owned(), page(&rig.app, uri, &ada).await));
     }
-    pages.insert(4, ("the hand-over".to_owned(), handover));
+    pages.insert(1, ("the hand-over".to_owned(), handover));
     let want = [
-        ("Agents", Some("Agents")),
-        ("Agents", Some("Agents")),
-        ("Agents", Some("Agents")),
         ("IAM", Some("Register")),
         ("IAM", Some("Register")),
         ("Agents", Some("Agents")),
@@ -545,8 +536,8 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         ("IAM", Some("Persons")),
         ("IAM", Some("Grants")),
         ("IAM", Some("Hugging Face")),
-        ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
+        ("Agents", Some("Agents")),
         ("Agents", Some("Agents")),
         ("Agents", Some("Agents")),
         ("Agents", Some("Agents")),
@@ -591,31 +582,15 @@ async fn every_page_declares_its_tab_and_sub_tab() {
     assert!(seen >= 16, "the scan read the surfaces' pages ({seen})");
 }
 
-/// **A saved declaration leads on to registering its name**, and the
-/// register's form fills a name of the register's grammar alone. The empty
-/// screen leads nowhere, having no name.
+/// **The register's form fills a name of the register's grammar alone**,
+/// from its `name` query, and leaves the field empty otherwise.
 #[tokio::test]
-async fn a_saved_declaration_leads_on_to_registering_its_name() {
+async fn the_registers_form_fills_a_name_of_its_grammar_alone() {
     let Some(rig) = rig().await else {
         return;
     };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
-    let de = save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
-
-    let (status, _, page) =
-        send_as(&rig.app, "GET", &format!("/declarations/{de}"), None, &ada).await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    let next = &page[page.find(r#"<p class="next">"#).expect("a way forward")..];
-    let next = &next[..next.find("</p>").unwrap()];
-    assert!(
-        next.contains(r#"href="/admin/agents?name=karl""#)
-            && text(next).contains("2 Provision")
-            && text(next).contains("register an agent named karl"),
-        "{next}"
-    );
-    let (_, _, empty) = send_as(&rig.app, "GET", "/declarations/new", None, &ada).await;
-    assert!(!empty.contains(r#"class="next""#), "{empty}");
 
     for (uri, filled) in [
         ("/admin/agents?name=karl", "karl"),
@@ -631,6 +606,34 @@ async fn a_saved_declaration_leads_on_to_registering_its_name() {
             )),
             "{uri}: the name field holds {filled:?}: {page}"
         );
+    }
+}
+
+/// **The retired screens answer not found** (the Planner's brief of
+/// 2026-11-28, part 5): the declaration screen's bare routes and the SSH
+/// keys page's, to an admin, each 404 as any path no surface serves. Each
+/// is a request the retired route answered otherwise (a page, a redirect
+/// or a refusal), so each case can fail.
+///
+/// Perturbation: serve `/declarations` again, or `/admin/ssh-key`, and its
+/// case answers.
+#[tokio::test]
+async fn the_retired_screens_answer_not_found() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    for (method, uri) in [
+        ("GET", "/declarations"),
+        ("GET", "/declarations/new"),
+        ("POST", "/declarations"),
+        ("GET", "/admin/ssh-key"),
+        ("POST", "/admin/ssh-key"),
+    ] {
+        let body = (method == "POST").then(|| form(&[("line", "x")]));
+        let (status, _, page) = send_as(&rig.app, method, uri, body, &ada).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {page}");
     }
 }
 
@@ -717,14 +720,15 @@ fn paragraph(page: &str, class: &str) -> Option<String> {
     Some(p[..p.find("</p>").unwrap()].to_owned())
 }
 
-/// **The agent page leads on to The Record and, for an admin, back to its
-/// declaration**: The Record for every reader, saying it is the whole record
-/// and not this agent's; for an admin, the declaration saved under the
-/// agent's name, its head, or a new one where none is saved, and the
-/// rail's Declare and Provision as links. A person who is not an admin
-/// sees neither the way back nor a linked mark.
+/// **The agent page leads on to The Record, and links no retired screen**:
+/// The Record for every reader, saying it is the whole record and not this
+/// agent's; for an admin, the rail's Provision as a link. No screen writes
+/// a declaration now (the Planner's brief of 2026-11-28, part 5), so no way
+/// back to one stands and the rail's Declare is never a link, whether a
+/// declaration is saved under the name or not. A person who is not an
+/// admin sees no linked mark.
 #[tokio::test]
-async fn the_agent_page_leads_on_to_record_and_back_to_its_declaration() {
+async fn the_agent_page_leads_on_to_record_and_links_no_retired_screen() {
     let Some(rig) = rig().await else {
         return;
     };
@@ -757,51 +761,35 @@ async fn the_agent_page_leads_on_to_record_and_back_to_its_declaration() {
     assert!(rail_links(&page).is_empty(), "{page}");
     assert_eq!(rail(&page).len(), 8, "{page}");
 
-    let page = page_of(&ada).await;
-    assert!(paragraph(&page, "next").is_some(), "{page}");
-    let back = paragraph(&page, "back").expect("the way back");
-    assert!(
-        back.contains(r#"href="/declarations/new""#)
-            && text(&back).contains("no declaration is saved under the name karl"),
-        "{back}"
-    );
-    assert_eq!(
-        rail_links(&page),
-        [
-            ("1 Declare".to_owned(), "/declarations/new".to_owned()),
-            ("2 Provision".to_owned(), "/admin/agents".to_owned()),
-        ],
-        "{page}"
-    );
-    assert_eq!(rail(&page).len(), 8, "every stage, linked or not: {page}");
+    let admins = async || {
+        let page = page_of(&ada).await;
+        assert!(paragraph(&page, "next").is_some(), "{page}");
+        assert!(paragraph(&page, "back").is_none(), "{page}");
+        assert_eq!(
+            rail_links(&page),
+            [("2 Provision".to_owned(), "/admin/agents".to_owned())],
+            "{page}"
+        );
+        assert_eq!(rail(&page).len(), 8, "every stage, linked or not: {page}");
+        assert!(!page.contains("/declarations"), "{page}");
+        page
+    };
+    admins().await;
 
-    // Two versions of karl's lineage and another lineage: the head of
-    // karl's is the one named.
-    let first = save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
-    let second = save(
-        &rig.app,
+    // Two versions of karl's lineage and another lineage: the pane names
+    // the head, and still nothing links a retired screen.
+    let first = save(rig.store(), &ada, None, posted(&[], &[])).await;
+    save(
+        rig.store(),
         &ada,
-        &format!("/declarations/{first}"),
+        Some(&first),
         posted(&[("sampler.seed", "7")], &[]),
     )
     .await;
-    let _other = save(
-        &rig.app,
-        &ada,
-        "/declarations",
-        posted(&[("name", "jane")], &[]),
-    )
-    .await;
-    let page = page_of(&ada).await;
-    let back = paragraph(&page, "back").expect("the way back");
+    save(rig.store(), &ada, None, posted(&[("name", "jane")], &[])).await;
+    let page = admins().await;
     assert!(
-        back.contains(&format!(r#"href="/declarations/{second}""#))
-            && text(&back).contains("the declaration saved under the name karl, version 2"),
-        "{back}"
-    );
-    assert_eq!(
-        rail_links(&page)[0],
-        ("1 Declare".to_owned(), format!("/declarations/{second}")),
+        page.contains("The declaration saved under the name karl: version 2"),
         "{page}"
     );
 }

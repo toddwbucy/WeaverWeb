@@ -1,7 +1,3 @@
-//! conforms: web-a-save-and-a-reopen-are-the-same-document
-//! conforms: web-a-stale-row-reopens-and-saves-once-filled
-//! conforms: web-a-row-without-the-elections-reopens-and-saves-once-chosen
-//! conforms: web-a-row-without-the-state-election-reopens-and-saves-the-default
 //! conforms: web-an-election-beside-no-store-is-refused-and-none-is-written
 //! conforms: web-an-agents-state-election-derives-as-its-file-holds-it
 //!

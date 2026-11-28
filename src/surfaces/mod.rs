@@ -12,7 +12,6 @@ pub mod admin;
 pub mod admin_table;
 pub mod agents;
 pub mod alerts;
-pub mod declarations;
 pub mod declare_pane;
 #[cfg(feature = "passkeys")]
 pub mod enroll;
@@ -28,7 +27,6 @@ pub mod record;
 pub mod setup;
 #[cfg(feature = "passkeys")]
 pub mod sign_in;
-pub mod ssh_key;
 
 use axum::Router;
 use axum::extract::State;
@@ -55,14 +53,14 @@ pub(crate) struct Chrome {
 /// for the Agents list and the pages it opens (New agent and its Pair
 /// pages, the declaration's pages, the agent's page), all under the tab's
 /// one sub-tab, Agents; `operations` for The Record; `iam` for Persons,
-/// Grants, Register, Hugging Face, SSH keys and Passkeys. A `here` belongs
+/// Grants, Register, Hugging Face and Passkeys. A `here` belongs
 /// to one tab, so this one table names it and no page names both. A page
 /// of no tab, the sign-in and enrollment pages, has none.
 pub(crate) fn tab_of(here: &str) -> &'static str {
     match here {
         "declarations" | "pair" | "agents" => "agents",
         "record" => "operations",
-        "admin" | "grants" | "register" | "hugging-face" | "ssh-key" | "passkeys" => "iam",
+        "admin" | "grants" | "register" | "hugging-face" | "passkeys" => "iam",
         _ => "",
     }
 }

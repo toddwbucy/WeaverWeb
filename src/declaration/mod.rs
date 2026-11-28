@@ -1,18 +1,11 @@
-//! conforms: web-the-declaration-screen-refuses-every-field-out-of-shape
-//! conforms: web-a-class-spanning-capabilities-is-warned-of
-//! conforms: web-a-saved-declaration-carries-every-tunable-value
-//! conforms: web-every-tunable-value-is-judged-on-the-agents-range
-//! conforms: web-a-new-form-starts-with-five-tunable-values
-//! conforms: web-a-saved-declaration-carries-the-readout-election
-//! conforms: web-a-new-form-starts-with-two-elections-at-the-agents-absence
+//! conforms: web-a-declarations-document-refuses-every-field-out-of-shape
 //! conforms: web-an-election-beside-no-store-is-refused-and-none-is-written
-//! conforms: web-a-new-form-starts-at-the-default-state-election
 //! conforms: web-a-row-saved-with-the-withdrawn-placement-reads-without-it
 //!
 //! **The declaration's document** (Spec 6.1): the console's own grammar, a
-//! superset of the agent's, which the declaration screen saves and the
-//! store keeps (Spec 2.4). This module holds the grammar and nothing that
-//! reaches a store, an agent or a host: [`Document::parse`] judges a JSON
+//! superset of the agent's, which the declaration screen saved until it
+//! retired on 2026-11-28 and the store keeps (Spec 2.4). This module holds
+//! the grammar and nothing that reaches a store, an agent or a host: [`Document::parse`] judges a JSON
 //! value and refuses, naming the field, everything out of shape; [`Form`]
 //! reads the screen's form and turns it into that value, a refusal naming
 //! the screen's own slot; [`Document::serving`] judges, at save, that every

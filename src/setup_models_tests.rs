@@ -512,7 +512,12 @@ pub(crate) async fn count(s: &Store, table: &'static str) -> i64 {
 /// A fragment answered 200 under a session: a part of a page, unframed.
 async fn part(rig: &Rig, uri: &str, session: &str) -> String {
     let (status, _, body) = send_as(&rig.app, "GET", uri, None, session).await;
-    assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    // 286 is the pulls fragment's answer once settled, a success htmx
+    // swaps and polls no more after.
+    assert!(
+        status == StatusCode::OK || status.as_u16() == 286,
+        "{uri}: {status}: {body}"
+    );
     assert!(
         !body.contains("<nav class=\"masthead\">"),
         "a fragment is unframed: {body}"
@@ -813,7 +818,10 @@ async fn a_pick_asks_one_pull_and_the_page_shows_its_record() {
         &ada,
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{fragment}");
+    assert!(
+        status == StatusCode::OK || status.as_u16() == 286,
+        "{status}: {fragment}"
+    );
     assert!(fragment.contains(&pull_id), "{fragment}");
 
     let (status, body) = post_pick(
@@ -1720,7 +1728,7 @@ async fn the_adapters_step_follows_the_models_and_the_downloads_show_their_progr
         "{models_page}"
     );
     assert!(
-        models_page.contains(r#"hx-trigger="toggle once from:closest details""#),
+        models_page.contains(r#"hx-trigger="toggle from:closest details""#),
         "{models_page}"
     );
     assert!(
@@ -1862,5 +1870,93 @@ async fn the_adapters_step_follows_the_models_and_the_downloads_show_their_progr
             bytes(size)
         )),
         "the decoder's own row: {shown}"
+    );
+}
+
+/// **The downloads' poll stops once nothing on it can move** (the
+/// Planner's review of part 4, 2026-11-28; Spec 6.2): the pulls fragment
+/// answers 286, which htmx swaps and polls no more after, where there is no
+/// pull, where every pull has ended failed or cancelled, and where the
+/// decoder's pull is verified and its identity read; it answers 200 while a
+/// pull runs and while a verified decoder's identity is still owed. A
+/// header's read is tried again at the next opening, so a read that failed
+/// never stays the waiting sentence for good.
+///
+/// Perturbation: answer 200 always, and the first case fails; answer 286
+/// once no pull runs whatever the identity, and the owed case fails; put
+/// `once` back on the header's trigger, and the last assertion fails.
+#[tokio::test]
+async fn the_downloads_poll_stops_once_nothing_on_it_can_move() {
+    let Some((rig, _fake, _, _cache)) = rig(true).await else {
+        return;
+    };
+    let s = rig.store();
+    let (ada, setup) = setup_of(&rig, "karl").await;
+    let pulls = format!("/setup/{setup}/models/pull");
+    let status_of = async || send_as(&rig.app, "GET", &pulls, None, &ada).await.0;
+    assert_eq!(status_of().await.as_u16(), 286, "no pull");
+
+    let (status, body) = post_pick(
+        &rig,
+        &ada,
+        &setup,
+        pick("1", "decoder", "org/split", "m-00001-of-00002.gguf", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    let pull = pull_of(s, &setup, "decoder").await;
+    assert_eq!(ended(s, &pull).await, "verified");
+    assert_eq!(status_of().await, StatusCode::OK, "the identity is owed");
+
+    async fn set(s: &Store, pull: &str, sql: &'static str) {
+        sqlx::query(sql).bind(pull).execute(&s.pool).await.unwrap();
+    }
+    set(
+        s,
+        &pull,
+        "UPDATE model_pull SET state = 'running', finished_at = NULL WHERE pull_id = $1",
+    )
+    .await;
+    assert_eq!(status_of().await, StatusCode::OK, "a pull runs");
+    set(
+        s,
+        &pull,
+        "UPDATE model_pull SET state = 'failed', finished_at = now(), reason = 'gone' \
+         WHERE pull_id = $1",
+    )
+    .await;
+    assert_eq!(status_of().await.as_u16(), 286, "failed");
+    set(
+        s,
+        &pull,
+        "UPDATE model_pull SET state = 'cancelled', reason = NULL, cancelled_by = asked_by \
+         WHERE pull_id = $1",
+    )
+    .await;
+    assert_eq!(status_of().await.as_u16(), 286, "cancelled");
+    set(
+        s,
+        &pull,
+        "UPDATE model_pull SET state = 'verified', cancelled_by = NULL WHERE pull_id = $1",
+    )
+    .await;
+    assert_eq!(status_of().await, StatusCode::OK, "owed again");
+    sqlx::query(
+        "INSERT INTO base_identity (repository, commit_id, choice, blake3, bytes, pull_id) \
+         SELECT repository, commit_id, choice, $2, 1, pull_id FROM agent_setup_model \
+         WHERE pull_id = $1",
+    )
+    .bind(&pull)
+    .bind("a".repeat(64))
+    .execute(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(status_of().await.as_u16(), 286, "verified and read");
+
+    let models_page = page(&rig.app, &models(&setup, "org/split"), &ada).await;
+    assert!(
+        models_page.contains(r#"hx-trigger="toggle from:closest details""#)
+            && !models_page.contains("toggle once"),
+        "{models_page}"
     );
 }

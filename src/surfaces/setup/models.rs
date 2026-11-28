@@ -844,6 +844,21 @@ struct PullsView {
     /// Every file of every pull, in all.
     total: Progress,
     identity: IdentityView,
+    /// **Whether nothing on the fragment can move any more**: no pull
+    /// runs, and no verified decoder's identity is still owed by its hash.
+    /// The fragment then answers 286, which stops htmx's poll (the
+    /// Planner's review of part 4, 2026-11-28).
+    settled: bool,
+}
+
+/// **The status that stops an htmx poll**, answered with the fragment once
+/// it is settled; htmx swaps it as any success and polls no more.
+const POLL_STOPS: u16 = 286;
+
+/// **A sum of byte counts that saturates**, so no size a listing or a row
+/// carries panics a debug build or wraps a release one.
+fn bytes_in_all(counts: impl IntoIterator<Item = u64>) -> u64 {
+    counts.into_iter().fold(0, u64::saturating_add)
 }
 
 #[derive(Template)]
@@ -862,10 +877,10 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
         let done_of = |f: &crate::store::model_pull::PullFile| {
             u64::try_from(f.bytes_done).unwrap_or(0).min(f.file.size)
         };
-        let size: u64 = files.iter().map(|f| f.file.size).sum();
-        let done: u64 = files.iter().map(done_of).sum();
-        all_done += done;
-        all_size += size;
+        let size = bytes_in_all(files.iter().map(|f| f.file.size));
+        let done = bytes_in_all(files.iter().map(done_of));
+        all_done = all_done.saturating_add(done);
+        all_size = all_size.saturating_add(size);
         pulls.push(RolePullView {
             role: if row.role == "decoder" {
                 "decoder"
@@ -920,15 +935,19 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
             },
         },
     };
+    let owed = decoder.is_some_and(|d| d.pull_state == "verified") && identity.blake3.is_none();
+    let settled = rows.iter().all(|r| r.pull_state != "running") && !owed;
     Ok(PullsView {
         pulls,
         total: Progress::of(all_done, all_size),
         identity,
+        settled,
     })
 }
 
 /// **The setup's pulls, re-fetched by the page** every 3 s: the session
-/// read in the background and the admin check, as the cache's section's.
+/// read in the background and the admin check, as the cache's section's;
+/// answered 286 once settled, so the poll stops.
 async fn pulls(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -> Response {
     if !is_setup_id(setup_id) {
         return (StatusCode::BAD_REQUEST, MALFORMED_SETUP).into_response();
@@ -953,8 +972,13 @@ async fn pulls(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) 
         Ok(pulls) => pulls,
         Err(e) => return fault(e),
     };
+    let status = if pulls.settled {
+        StatusCode::from_u16(POLL_STOPS).expect("286 is a status")
+    } else {
+        StatusCode::OK
+    };
     match (PullsFragment { pulls }).render() {
-        Ok(html) => Html(html).into_response(),
+        Ok(html) => (status, Html(html)).into_response(),
         Err(e) => fault(e),
     }
 }
@@ -1369,8 +1393,8 @@ mod tests {
         ]
     }
 
-    /// **A pick's form is parsed to its shape**: the decoder's without a
-    /// scale and the adapter's with a finite one are taken.
+    /// **A download's progress is bytes, a whole percentage and a bar**:
+    /// rounded down, capped at the size, nothing to fetch done.
     #[test]
     fn a_downloads_progress_is_bytes_a_whole_percentage_and_a_bar() {
         let read = |done, size| {
@@ -1390,6 +1414,22 @@ mod tests {
         );
     }
 
+    /// **Byte counts sum saturating** (the Planner's review of part 4,
+    /// 2026-11-28): sizes past `u64::MAX` in all read as `u64::MAX`, never
+    /// a panic or a wrap.
+    ///
+    /// Perturbation: sum with `Iterator::sum`, and the test build panics on
+    /// the overflow.
+    #[test]
+    fn byte_counts_sum_saturating() {
+        assert_eq!(bytes_in_all([]), 0);
+        assert_eq!(bytes_in_all([1, 2, 3]), 6);
+        assert_eq!(bytes_in_all([u64::MAX, 1]), u64::MAX);
+        assert_eq!(bytes_in_all([u64::MAX - 1, 1, u64::MAX]), u64::MAX);
+    }
+
+    /// **A pick's form is parsed to its shape**: the decoder's without a
+    /// scale and the adapter's with a finite one are taken.
     #[test]
     fn a_picks_form_is_taken_in_its_shape() {
         let ask = pick_ask(&fields(&decoder())).unwrap();

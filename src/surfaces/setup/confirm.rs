@@ -217,7 +217,7 @@ fn adapter_view(m: &Members) -> Vec<MemberView> {
             source: "the setup's picks",
             rows: vec![("Adapter".to_owned(), NO_ADAPTER.to_owned())],
             why: None,
-            waits: "an adapter's pick on the models page, where one is wanted",
+            waits: "an adapter's pick on the Adapter page, where one is wanted",
             change: None,
         }];
     }
@@ -241,7 +241,7 @@ fn adapter_view(m: &Members) -> Vec<MemberView> {
         member(
             "The adapter's scale",
             "the setup, the adapter's pick",
-            "the adapter's pick on the models page",
+            "the adapter's pick on the Adapter page",
             &scale,
             |s| vec![("Scale".to_owned(), s.to_string())],
         ),

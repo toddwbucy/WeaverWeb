@@ -397,10 +397,21 @@ async fn the_turn_context_is_required_and_never_defaulted() {
     let (ada, setup) = setup_of(&rig, "karl").await;
     let uri = format!("/setup/{setup}/placement");
     let first = read(&rig.app, &uri, &ada).await;
-    for word in ["continuous", "independent"] {
+    // **Each turn context says what it means, in plain words** (the
+    // Planner's brief of 2026-11-28, part 4).
+    for (word, meaning) in [
+        (
+            "continuous",
+            "the conversation carries over from turn to turn",
+        ),
+        (
+            "independent",
+            "each turn starts fresh from the starting prompt",
+        ),
+    ] {
         assert!(
             first.contains(&format!(
-                r#"<input type="radio" name="turn_context" value="{word}" required>"#
+                r#"<input type="radio" name="turn_context" value="{word}" required> {word}: {meaning}</label>"#
             )),
             "{word}: {first}"
         );

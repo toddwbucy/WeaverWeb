@@ -1,3 +1,4 @@
+//! conforms: web-the-declaration-runs-in-the-order-of-the-work
 //! conforms: web-the-models-roster-is-one-decoder-and-at-most-one-adapter
 //! conforms: web-a-pick-asks-hugging-face-only-after-the-admin-gate
 //! conforms: web-an-adapters-pick-carries-a-finite-scale
@@ -454,6 +455,11 @@ fn models(setup: &str, repository: &str) -> String {
     format!("/setup/{setup}/models?repository={repository}&revision=main")
 }
 
+/// The adapter's page, asked a repository: the step after the model's.
+fn adapter(setup: &str, repository: &str) -> String {
+    format!("/setup/{setup}/adapter?repository={repository}&revision=main")
+}
+
 fn header_of(setup: &str, repository: &str, choice: &str) -> String {
     format!("/setup/{setup}/models/header?repository={repository}&commit={COMMIT}&choice={choice}")
 }
@@ -553,11 +559,19 @@ async fn two_parts_show_as_one_choice_with_their_total_size() {
         "{listed}"
     );
     assert!(
-        listed.contains(r#"<h3 class="mono">m-00001-of-00002.gguf</h3>"#),
+        listed.contains(
+            r#"<details class="choice">
+    <summary><span class="mono">m-00001-of-00002.gguf</span>, 2 parts, "#
+        ),
         "{listed}"
     );
     assert!(
-        !listed.contains(r#"<h3 class="mono">m-00002-of-00002.gguf</h3>"#),
+        !listed.contains(r#"<summary><span class="mono">m-00002-of-00002.gguf</span>"#),
+        "{listed}"
+    );
+    // Its parts by name, inside the choice, opened on a click.
+    assert!(
+        listed.contains(r#"<li><span class="mono">m-00002-of-00002.gguf</span>, "#),
         "{listed}"
     );
     assert!(!listed.contains("config.json"), "{listed}");
@@ -570,7 +584,11 @@ async fn two_parts_show_as_one_choice_with_their_total_size() {
     );
     assert!(
         listed.contains(
-            &header_of(&setup, "org%2Fsplit", "m-00001-of-00002.gguf").replace('&', "&#38;")
+            &format!(
+                "{}&role=decoder",
+                header_of(&setup, "org%2Fsplit", "m-00001-of-00002.gguf")
+            )
+            .replace('&', "&#38;")
         ),
         "{listed}"
     );
@@ -991,7 +1009,7 @@ async fn an_adapters_pick_carries_a_finite_scale() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let row = &s.setup_models(&setup).await.unwrap()[0];
     assert_eq!((row.role.as_str(), row.scale), ("adapter", Some(0.5)));
-    let shown = page(&rig.app, &format!("/setup/{setup}/models"), &ada).await;
+    let shown = page(&rig.app, &format!("/setup/{setup}/adapter"), &ada).await;
     assert!(
         shown.contains(r#"<tr><th>Scale</th><td class="mono">0.5</td></tr>"#),
         "{shown}"
@@ -1402,7 +1420,7 @@ async fn at_most_four_header_reads_run_at_once() {
     assert!((2..=4).contains(&most), "{most} in flight at once");
 }
 
-/// The adapter's pane on the models page.
+/// The adapter's pane on the adapter's page.
 fn adapter_pane(page: &str) -> &str {
     let at = page
         .find("<h2>The adapter</h2>")
@@ -1443,7 +1461,7 @@ async fn an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not() 
     let dropping = format!("/setup/{setup}/models/drop");
     let action = format!(r#"<form method="post" action="{dropping}""#);
     let none = "No adapter is picked: the agent loads its base alone.";
-    let shown = page(&rig.app, &models(&setup, "org/adapter"), &ada).await;
+    let shown = page(&rig.app, &adapter(&setup, "org/adapter"), &ada).await;
     assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
     let pane = adapter_pane(&shown);
     assert!(
@@ -1463,7 +1481,7 @@ async fn an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not() 
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let pull = pull_of(s, &setup, "adapter").await;
     assert_eq!(ended(s, &pull).await, "verified");
-    let shown = page(&rig.app, &models(&setup, "org/adapter"), &ada).await;
+    let shown = page(&rig.app, &adapter(&setup, "org/adapter"), &ada).await;
     let pane = adapter_pane(&shown);
     assert!(pane.contains(&action), "{pane}");
     assert!(
@@ -1495,7 +1513,7 @@ async fn an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not() 
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     assert_eq!(
         location.as_deref(),
-        Some(format!("/setup/{setup}/models").as_str())
+        Some(format!("/setup/{setup}/adapter").as_str())
     );
     assert_eq!(audited(s, "setup drop").await, (2, 1, 1, 0));
     assert_eq!(s.setup(&setup).await.unwrap().unwrap().version, 3);
@@ -1506,7 +1524,7 @@ async fn an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not() 
             .await
             .unwrap();
     assert!(roles.is_empty(), "{roles:?}");
-    let shown = page(&rig.app, &models(&setup, "org/adapter"), &ada).await;
+    let shown = page(&rig.app, &adapter(&setup, "org/adapter"), &ada).await;
     assert!(walk(&shown).is_empty(), "{:?}", walk(&shown));
     let pane = adapter_pane(&shown);
     assert!(
@@ -1547,7 +1565,7 @@ async fn an_open_setups_adapter_pick_is_dropped_and_a_confirmed_setups_is_not() 
     assert!(body.contains("the setup is confirmed"), "{body}");
     assert_eq!(audited(s, "setup drop").await, (2, 1, 1, 0));
     assert_ne!(pull_of(s, &kept, "adapter").await, "", "its adapter stands");
-    let shown = page(&rig.app, &models(&kept, "org/adapter"), &ada).await;
+    let shown = page(&rig.app, &adapter(&kept, "org/adapter"), &ada).await;
     assert!(
         !adapter_pane(&shown).contains("/models/drop"),
         "no Drop on a confirmed setup: {shown}"
@@ -1654,9 +1672,195 @@ async fn a_pick_and_a_drop_dropped_at_their_first_records_still_land() {
             .await
             .unwrap();
     assert_eq!(roles, vec!["decoder"], "the drop removed the adapter's row");
-    let shown = page(&rig.app, &format!("/setup/{setup}/models"), &ada).await;
+    let shown = page(&rig.app, &format!("/setup/{setup}/adapter"), &ada).await;
     assert!(
         adapter_pane(&shown).contains("No adapter is picked: the agent loads its base alone."),
         "{shown}"
+    );
+}
+
+/// **The declaration runs in the order of the work** (Spec 6.2; the
+/// operator's words of 2026-11-27, the Planner's brief of 2026-11-28, part
+/// 4): Models draws the decoder's role alone and Adapter the adapter's, an
+/// adapter's page saying it goes on to Placement with none; each choice is
+/// a `<details>` whose header is read when it opens; a header offers its
+/// pick on its own role's page alone and says where the other is picked; a
+/// role of neither is refused; the decoder's pick lands on Adapter; and the
+/// downloads show each file's bytes done of its size, a whole percentage
+/// and a bar, and the same in all, re-fetched every 3 s.
+///
+/// Perturbations, each measured 2026-11-28: land the decoder's pick on
+/// Models again, and the location fails; offer a header's pick whatever
+/// page asked, and the model's header offers it on Adapter; draw both
+/// roles on both pages, and Models holds the adapter's pane; load each
+/// header on the page's load, and the trigger fails; drop a file's row or
+/// the row in all, and each is missing. The percentage's rounding and its
+/// cap at the size are `models::tests::a_downloads_progress_is_bytes_a_whole_percentage_and_a_bar`'s.
+#[tokio::test]
+async fn the_adapters_step_follows_the_models_and_the_downloads_show_their_progress() {
+    let Some((rig, _fake, _, _cache)) = rig(true).await else {
+        return;
+    };
+    let s = rig.store();
+    let (ada, setup) = setup_of(&rig, "karl").await;
+
+    let models_page = page(&rig.app, &models(&setup, "org/split"), &ada).await;
+    assert!(
+        models_page.contains("<h2>The decoder</h2>"),
+        "{models_page}"
+    );
+    assert!(
+        !models_page.contains("<h2>The adapter</h2>"),
+        "{models_page}"
+    );
+    assert!(
+        models_page.contains(&format!(
+            r#"<p class="next">Next: <a href="/setup/{setup}/adapter">Adapter</a></p>"#
+        )),
+        "{models_page}"
+    );
+    assert!(
+        models_page.contains(r#"hx-trigger="toggle once from:closest details""#),
+        "{models_page}"
+    );
+    assert!(
+        !models_page.contains(r#"hx-trigger="load""#),
+        "{models_page}"
+    );
+    assert!(
+        models_page.contains(r#"hx-get="/setup/"#)
+            && models_page.contains(r#"hx-trigger="every 3s""#),
+        "{models_page}"
+    );
+
+    let adapter_page = page(&rig.app, &adapter(&setup, "org/adapter"), &ada).await;
+    assert!(
+        adapter_page.contains("<h2>The adapter</h2>"),
+        "{adapter_page}"
+    );
+    assert!(
+        !adapter_page.contains("<h2>The decoder</h2>"),
+        "{adapter_page}"
+    );
+    assert!(
+        !adapter_page.contains("<h2>Beyond one decoder and one adapter</h2>"),
+        "{adapter_page}"
+    );
+    assert!(
+        adapter_page.contains(
+            "No adapter is picked: the agent loads its base alone. Pick one from a repository below, or go on to Placement with none."
+        ),
+        "{adapter_page}"
+    );
+    assert!(
+        adapter_page.contains(&format!(
+            r#"<form method="get" action="/setup/{setup}/adapter" class="field">"#
+        )),
+        "{adapter_page}"
+    );
+    assert!(adapter_page.contains("&#38;role=adapter"), "{adapter_page}");
+    assert!(
+        adapter_page.contains(&format!(
+            r#"<p class="next">Next: <a href="/setup/{setup}/placement">Placement</a></p>"#
+        )),
+        "{adapter_page}"
+    );
+
+    let decoder_header = header_of(&setup, "org/split", "m-00001-of-00002.gguf");
+    let adapter_header = header_of(&setup, "org/adapter", "adapter.gguf");
+    let elsewhere = part(&rig, &format!("{decoder_header}&role=adapter"), &ada).await;
+    assert!(!elsewhere.contains(r#"name="role""#), "{elsewhere}");
+    assert!(
+        elsewhere.contains("this file is a model, which the Models step picks as the decoder"),
+        "{elsewhere}"
+    );
+    let elsewhere = part(&rig, &format!("{adapter_header}&role=decoder"), &ada).await;
+    assert!(!elsewhere.contains(r#"name="role""#), "{elsewhere}");
+    assert!(
+        elsewhere.contains("this file is an adapter, which the Adapter step picks after the model"),
+        "{elsewhere}"
+    );
+    let offered = part(&rig, &format!("{adapter_header}&role=adapter"), &ada).await;
+    assert!(
+        offered.contains(r#"name="role" value="adapter""#),
+        "{offered}"
+    );
+    let (status, _, body) = send_as(
+        &rig.app,
+        "GET",
+        &format!("{decoder_header}&role=classifier"),
+        None,
+        &ada,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    let (status, headers, body) = send_as(
+        &rig.app,
+        "POST",
+        &format!("/setup/{setup}/models"),
+        Some(pick(
+            "1",
+            "decoder",
+            "org/split",
+            "m-00001-of-00002.gguf",
+            None,
+        )),
+        &ada,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(
+        headers[header::LOCATION],
+        format!("/setup/{setup}/adapter"),
+        "the model's pick lands on the adapter's step"
+    );
+    let pull = pull_of(s, &setup, "decoder").await;
+    assert_eq!(ended(s, &pull).await, "verified");
+
+    // One file half done, so the rows read apart.
+    let (one, two) = split_parts();
+    let (one, two) = (one.len() as u64, two.len() as u64);
+    let half = two / 2;
+    sqlx::query("UPDATE model_pull_file SET bytes_done = $2 WHERE pull_id = $1 AND path = $3")
+        .bind(&pull)
+        .bind(i64::try_from(half).unwrap())
+        .bind("m-00002-of-00002.gguf")
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let shown = part(&rig, &format!("/setup/{setup}/models/pull"), &ada).await;
+    let row = |name: &str, done: u64, size: u64, percent: u64| {
+        format!(
+            r#"<tr><td class="mono">{name}</td><td></td><td>{} of {}, {percent}%</td><td><progress value="{done}" max="{size}">{percent}%</progress></td></tr>"#,
+            bytes(done),
+            bytes(size)
+        )
+    };
+    assert!(
+        shown.contains(&row("m-00001-of-00002.gguf", one, one, 100)),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(&row("m-00002-of-00002.gguf", half, two, half * 100 / two)),
+        "{shown}"
+    );
+    let (done, size) = (one + half, one + two);
+    let percent = done * 100 / size;
+    assert!(
+        shown.contains(&format!(
+            r#"<tr><th>In all</th><td></td><td>{} of {}, {percent}%</td><td><progress value="{done}" max="{size}">{percent}%</progress></td></tr>"#,
+            bytes(done),
+            bytes(size)
+        )),
+        "{shown}"
+    );
+    assert!(
+        shown.contains(&format!(
+            r#"<td>{} of {}, {percent}%</td>"#,
+            bytes(done),
+            bytes(size)
+        )),
+        "the decoder's own row: {shown}"
     );
 }

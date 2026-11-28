@@ -58,6 +58,14 @@ const FIELDS: [&str; 4] = ["version", "context_length", "turn_context", "device"
 /// The two turn contexts.
 const TURN_CONTEXTS: [&str; 2] = ["continuous", "independent"];
 
+/// **What each turn context means, in plain words** (the Planner's brief
+/// of 2026-11-28, part 4), beside its word on the page, in the order of
+/// `TURN_CONTEXTS`.
+const TURN_MEANINGS: [&str; 2] = [
+    "the conversation carries over from turn to turn",
+    "each turn starts fresh from the starting prompt",
+];
+
 pub(super) fn routes(seams: &Seams) -> Router<Store> {
     let page_seams = seams.clone();
     let save_seams = seams.clone();
@@ -207,7 +215,7 @@ struct PlacementPage {
     context: ContextView,
     /// The turn context kept, and empty where none is.
     turn: String,
-    turn_contexts: [&'static str; 2],
+    turn_contexts: [(&'static str, &'static str); 2],
     /// The survey's cards, where the survey has reported.
     cards: Option<Vec<CardView>>,
     devices: DevicesView,
@@ -319,7 +327,10 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -
         open: setup.state == "open",
         context,
         turn: setup.turn_context.clone().unwrap_or_default(),
-        turn_contexts: TURN_CONTEXTS,
+        turn_contexts: [
+            (TURN_CONTEXTS[0], TURN_MEANINGS[0]),
+            (TURN_CONTEXTS[1], TURN_MEANINGS[1]),
+        ],
         cards,
         devices,
         layers,

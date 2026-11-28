@@ -1,19 +1,27 @@
+//! conforms: web-the-declaration-runs-in-the-order-of-the-work
 //! conforms: web-the-models-roster-is-one-decoder-and-at-most-one-adapter
 //! conforms: web-a-pick-asks-hugging-face-only-after-the-admin-gate
 //! conforms: web-an-adapters-pick-carries-a-finite-scale
 //! conforms: web-an-admin-write-runs-from-its-first-record-to-its-outcome-in-a-task-the-request-cannot-cancel
 //! conforms: web-an-open-setups-adapter-pick-can-be-dropped-and-a-confirmed-setups-cannot
 //!
-//! **The models page** (Spec 6.2), a child of the setup pages' module.
-//! `GET /setup/{setup}/models` draws the setup's two roles, a roster of
-//! one decoder and at most one adapter on it, the rest of the roster drawn
-//! unbuilt, and, for a repository and a revision asked in its form,
-//! the commit the revision resolves to and each choice with its size. Each
-//! complete choice's header is its own fragment (`GET
-//! /setup/{setup}/models/header`), read by range through the commit and
-//! kept in memory (`hugging_face::headers`), with the pick's form where the
-//! header's `general.type` admits the role. The setup's pulls and the
-//! base's identity are a fragment the page re-fetches every 15 s (`GET
+//! **The models page and the adapter's page** (Spec 6.2), a child of the
+//! setup pages' module, **in the order of the work** (the operator's words
+//! of 2026-11-27; the Planner's brief of 2026-11-28, part 4).
+//! `GET /setup/{setup}/models` draws the decoder's role, the rest of the
+//! roster drawn unbuilt, and, for a repository and a revision asked in its
+//! form, the commit the revision resolves to and each choice by name, a
+//! `<details>` that opens on a click to its parts and its header; a pick
+//! of the decoder lands on `GET /setup/{setup}/adapter`, which draws the
+//! adapter's role, picked from a repository the same way, or none, the
+//! agent then loading its base alone. Each complete choice's header is its
+//! own fragment (`GET /setup/{setup}/models/header`), read by range through
+//! the commit when its choice is first opened and kept in memory
+//! (`hugging_face::headers`), with the pick's form where the header's
+//! `general.type` admits the role of the page that asked it. **A file's
+//! download starts at its pick.** The setup's pulls, each file's bytes done
+//! of its size with a percentage and a bar and the same in all, and the
+//! base's identity, are a fragment both pages re-fetch every 3 s (`GET
 //! /setup/{setup}/models/pull`) through the session's background read.
 //!
 //! **The pick** (`POST /setup/{setup}/models`) takes the admin writes'
@@ -71,7 +79,20 @@ pub(super) fn routes(seams: &Seams) -> Router<Store> {
     let header_seams = seams.clone();
     let pull_seams = seams.clone();
     let drop_seams = seams.clone();
+    let adapter_seams = seams.clone();
     Router::new()
+        .route(
+            "/setup/{setup}/adapter",
+            get(
+                move |State(store): State<Store>,
+                      headers: HeaderMap,
+                      Path(setup): Path<String>,
+                      Query(look): Query<Look>| {
+                    let seams = adapter_seams.clone();
+                    async move { page(store, &seams, headers, &setup, look, Page::Adapter).await }
+                },
+            ),
+        )
         .route(
             "/setup/{setup}/models",
             get(
@@ -80,7 +101,7 @@ pub(super) fn routes(seams: &Seams) -> Router<Store> {
                       Path(setup): Path<String>,
                       Query(look): Query<Look>| {
                     let seams = page_seams.clone();
-                    async move { page(store, &seams, headers, &setup, look).await }
+                    async move { page(store, &seams, headers, &setup, look, Page::Models).await }
                 },
             )
             .post(
@@ -191,6 +212,29 @@ impl Role {
         }
     }
 
+    /// The role the page `here` picks: the decoder on Models, the adapter
+    /// on Adapter.
+    fn of_page(here: Page) -> Role {
+        if here == Page::Adapter {
+            Role::Adapter
+        } else {
+            Role::Decoder
+        }
+    }
+
+    /// Why a header of this role is offered no pick on the other role's
+    /// page: each role is picked on its own page.
+    fn elsewhere(self) -> String {
+        match self {
+            Role::Decoder => {
+                "this file is a model, which the Models step picks as the decoder".to_owned()
+            }
+            Role::Adapter => {
+                "this file is an adapter, which the Adapter step picks after the model".to_owned()
+            }
+        }
+    }
+
     /// The role a header's `general.type` admits: a model's file, or one
     /// that names no type, a decoder's, and an adapter's file an
     /// adapter's. Any other type admits neither, with the reason.
@@ -290,6 +334,8 @@ struct ChoiceView {
     name: String,
     parts: usize,
     size: String,
+    /// Each part's path and size, shown once the choice is opened.
+    files: Vec<(String, String)>,
     /// Why no pick is offered, where a part does not stand.
     missing: Option<String>,
     /// The header fragment's address, for a choice whose header is read.
@@ -342,6 +388,11 @@ struct ModelsPage {
     admin: bool,
     chrome: crate::surfaces::Chrome,
     frame: Frame,
+    /// The page's own address's last part, `models` or `adapter`, which its
+    /// repository's form asks again.
+    step: &'static str,
+    /// Whether this is the adapter's page.
+    adapter_step: bool,
     roles: Vec<RoleView>,
     listing: Option<ListingView>,
     /// Why no pick is offered on this page, where none is.
@@ -431,6 +482,7 @@ async fn page(
     headers: HeaderMap,
     setup_id: &str,
     look: Look,
+    here: Page,
 ) -> Response {
     let wanted = wanted(&look);
     let (session, setup) = match super::declaration_read(&store, seams, &headers, setup_id).await {
@@ -463,7 +515,7 @@ async fn page(
             choices: Vec::new(),
         }),
         Wanted::Repository(repo, revision) => {
-            Some(listing(seams, setup_id, &through, &repo, &revision).await)
+            Some(listing(seams, setup_id, &through, &repo, &revision, here).await)
         }
     };
     let no_pick = no_pick(seams, &through, &setup.state);
@@ -472,11 +524,10 @@ async fn page(
         who: session.name.clone(),
         admin: true,
         chrome,
-        frame: frame(&setup, Page::Models),
-        roles: vec![
-            role_view(Role::Decoder, &rows, &setup),
-            role_view(Role::Adapter, &rows, &setup),
-        ],
+        frame: frame(&setup, here),
+        step: here.slug(),
+        adapter_step: here == Page::Adapter,
+        roles: vec![role_view(Role::of_page(here), &rows, &setup)],
         listing,
         no_pick,
         pulls,
@@ -499,6 +550,7 @@ async fn listing(
     through: &Through,
     repo: &RepoId,
     revision: &str,
+    here: Page,
 ) -> ListingView {
     let mut view = ListingView {
         repository: repo.to_string(),
@@ -538,7 +590,8 @@ async fn listing(
                 view.gated = Some(GatedView {
                     accept,
                     again: format!(
-                        "/setup/{setup_id}/models?repository={}&revision={}",
+                        "/setup/{setup_id}/{}?repository={}&revision={}",
+                        here.slug(),
                         query(&repo.to_string()),
                         query(revision)
                     ),
@@ -564,14 +617,20 @@ async fn listing(
         .map(|c| ChoiceView {
             header_href: (readable && c.missing.is_none()).then(|| {
                 format!(
-                    "/setup/{setup_id}/models/header?repository={}&commit={}&choice={}",
+                    "/setup/{setup_id}/models/header?repository={}&commit={}&choice={}&role={}",
                     query(&repo.to_string()),
                     model.commit,
-                    query(&c.name)
+                    query(&c.name),
+                    Role::of_page(here).as_str()
                 )
             }),
             name: c.name.clone(),
             parts: c.parts.len(),
+            files: c
+                .parts
+                .iter()
+                .map(|f| (f.path.clone(), bytes(f.size)))
+                .collect(),
             size: bytes(c.bytes()),
             missing: c.missing.clone(),
         })
@@ -592,6 +651,10 @@ pub(super) struct HeaderAsk {
     repository: String,
     commit: String,
     choice: String,
+    /// The role of the page that asked, `decoder` or `adapter`: the pick's
+    /// form is offered for that role alone. Absent, either.
+    #[serde(default)]
+    role: Option<String>,
 }
 
 #[derive(Template)]
@@ -625,13 +688,22 @@ async fn header(
     ask: HeaderAsk,
 ) -> Response {
     let repo = RepoId::parse(&ask.repository);
-    let Some(repo) = repo.filter(|_| is_commit(&ask.commit) && is_choice(&ask.choice)) else {
+    let wanted = match ask.role.as_deref() {
+        None => Some(None),
+        Some("decoder") => Some(Some(Role::Decoder)),
+        Some("adapter") => Some(Some(Role::Adapter)),
+        Some(_) => None,
+    };
+    let (Some(repo), Some(wanted)) = (
+        repo.filter(|_| is_commit(&ask.commit) && is_choice(&ask.choice)),
+        wanted,
+    ) else {
         if !is_setup_id(setup_id) {
             return (StatusCode::BAD_REQUEST, MALFORMED_SETUP).into_response();
         }
         return (
             StatusCode::BAD_REQUEST,
-            "a header names a repository, a 40-hex commit and a .gguf choice",
+            "a header names a repository, a 40-hex commit and a .gguf choice, and a role of decoder or adapter where it names one",
         )
             .into_response();
     };
@@ -675,6 +747,10 @@ async fn header(
             fragment.facts = Some(facts(&h));
             let offered = split_mismatch(&ask.choice, &h)
                 .map_or_else(|| Role::of(&h), Err)
+                .and_then(|role| match wanted {
+                    Some(w) if w != role => Err(role.elsewhere()),
+                    _ => Ok(role),
+                })
                 .and_then(|role| match no_pick(seams, &through, &setup.state) {
                     Some(why) => Err(why),
                     None => Ok(role),
@@ -709,8 +785,49 @@ struct RolePullView {
     state: String,
     hue: &'static str,
     reason: Option<String>,
+    progress: Progress,
+    files: Vec<FileProgress>,
+}
+
+/// **Bytes done of a size**, with the percentage and the bar's two values
+/// (Spec 6.2): a `<progress>` element, so the bar needs no script.
+struct Progress {
     done: String,
     size: String,
+    /// Whole percent, rounded down, so 100 means every byte.
+    percent: u64,
+    /// The bar's value and maximum: the bytes, or 1 of 1 or 0 of 1 for a
+    /// size of nothing, since a bar's maximum is above zero.
+    value: u64,
+    max: u64,
+}
+
+impl Progress {
+    fn of(done: u64, size: u64) -> Progress {
+        let (value, max, percent) = if size == 0 {
+            (1, 1, 100)
+        } else {
+            let done = done.min(size);
+            (
+                done,
+                size,
+                u64::try_from(u128::from(done) * 100 / u128::from(size)).unwrap_or(100),
+            )
+        };
+        Progress {
+            done: bytes(done),
+            size: bytes(size),
+            percent,
+            value,
+            max,
+        }
+    }
+}
+
+/// One file of a pull, by name, with its progress.
+struct FileProgress {
+    name: String,
+    progress: Progress,
 }
 
 /// The base's identity as the page shows it.
@@ -724,6 +841,8 @@ struct IdentityView {
 
 struct PullsView {
     pulls: Vec<RolePullView>,
+    /// Every file of every pull, in all.
+    total: Progress,
     identity: IdentityView,
 }
 
@@ -736,14 +855,17 @@ struct PullsFragment {
 async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> {
     let rows = store.setup_models(setup_id).await?;
     let mut pulls = Vec::new();
+    let (mut all_done, mut all_size) = (0u64, 0u64);
     for row in &rows {
         let files = store.pull_files(&row.pull_id).await?;
         let pull = store.pull(&row.pull_id).await?;
+        let done_of = |f: &crate::store::model_pull::PullFile| {
+            u64::try_from(f.bytes_done).unwrap_or(0).min(f.file.size)
+        };
         let size: u64 = files.iter().map(|f| f.file.size).sum();
-        let done: u64 = files
-            .iter()
-            .map(|f| u64::try_from(f.bytes_done).unwrap_or(0))
-            .sum();
+        let done: u64 = files.iter().map(done_of).sum();
+        all_done += done;
+        all_size += size;
         pulls.push(RolePullView {
             role: if row.role == "decoder" {
                 "decoder"
@@ -758,8 +880,14 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
             },
             state: row.pull_state.clone(),
             reason: pull.and_then(|p| p.reason),
-            done: bytes(done),
-            size: bytes(size),
+            progress: Progress::of(done, size),
+            files: files
+                .iter()
+                .map(|f| FileProgress {
+                    name: f.file.path.clone(),
+                    progress: Progress::of(done_of(f), f.file.size),
+                })
+                .collect(),
         });
     }
     let decoder = rows.iter().find(|r| r.role == "decoder");
@@ -792,10 +920,14 @@ async fn pulls_view(store: &Store, setup_id: &str) -> anyhow::Result<PullsView> 
             },
         },
     };
-    Ok(PullsView { pulls, identity })
+    Ok(PullsView {
+        pulls,
+        total: Progress::of(all_done, all_size),
+        identity,
+    })
 }
 
-/// **The setup's pulls, re-fetched by the page** every 15 s: the session
+/// **The setup's pulls, re-fetched by the page** every 3 s: the session
 /// read in the background and the admin check, as the cache's section's.
 async fn pulls(store: Store, seams: &Seams, headers: HeaderMap, setup_id: &str) -> Response {
     if !is_setup_id(setup_id) {
@@ -1131,7 +1263,9 @@ async fn pick(
             })
             .await;
         settled(&store, &first, &written).await;
-        landed(written, &setup_id, Page::Models)
+        // **Each pick lands on the adapter's page**, the step after the
+        // model's, where the downloads' progress shows too.
+        landed(written, &setup_id, Page::Adapter)
     })
     .await
 }
@@ -1207,7 +1341,7 @@ async fn drop_adapter(
             )
             .await;
         settled(&store, &first, &written).await;
-        landed(written, &setup_id, Page::Models)
+        landed(written, &setup_id, Page::Adapter)
     })
     .await
 }
@@ -1237,6 +1371,25 @@ mod tests {
 
     /// **A pick's form is parsed to its shape**: the decoder's without a
     /// scale and the adapter's with a finite one are taken.
+    #[test]
+    fn a_downloads_progress_is_bytes_a_whole_percentage_and_a_bar() {
+        let read = |done, size| {
+            let p = Progress::of(done, size);
+            (p.percent, p.value, p.max)
+        };
+        assert_eq!(read(0, 300), (0, 0, 300));
+        assert_eq!(read(1, 3), (33, 1, 3), "rounded down");
+        assert_eq!(read(299, 300), (99, 299, 300), "100 means every byte");
+        assert_eq!(read(300, 300), (100, 300, 300));
+        assert_eq!(read(400, 300), (100, 300, 300), "never past the size");
+        assert_eq!(read(0, 0), (100, 1, 1), "nothing to fetch is done");
+        assert_eq!(
+            read(u64::MAX, u64::MAX),
+            (100, u64::MAX, u64::MAX),
+            "no overflow"
+        );
+    }
+
     #[test]
     fn a_picks_form_is_taken_in_its_shape() {
         let ask = pick_ask(&fields(&decoder())).unwrap();

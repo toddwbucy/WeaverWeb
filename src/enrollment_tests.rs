@@ -2361,7 +2361,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
         "{models}"
     );
     assert!(
-        models.contains("<p>A tag or a 40-hex commit is taken in the branch's place too.</p>"),
+        models.contains("<p>A tag or a 40-hex commit is taken in the branch's place too. The model's pick is offered here, and the adapter's step follows it.</p>"),
         "{models}"
     );
     let offered = read(placement.clone()).await;

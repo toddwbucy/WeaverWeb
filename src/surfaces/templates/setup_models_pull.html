@@ -1,14 +1,20 @@
-{#- The setup's pulls and the base's identity (Spec 6.2), the page's own
-    and the fragment it re-fetches every 15 s. -#}
+{#- The setup's downloads and the base's identity (Spec 6.2), the page's
+    own and the fragment it re-fetches every 3 s: each pull, each of its
+    files by name and every file in all, as bytes done of the size, a
+    whole percentage and a bar, a <progress> element, so no script. -#}
 {%- if pulls.pulls.is_empty() %}
-<p>No pull has been asked for this setup.</p>
+<p>No download has been asked for this setup.</p>
 {%- else %}
 <table>
-  <thead><tr><th>Role</th><th>Pull</th><th>State</th><th>Progress</th></tr></thead>
+  <thead><tr><th>Download</th><th>State</th><th>Done</th><th>Progress</th></tr></thead>
   <tbody>
   {%- for p in pulls.pulls %}
-  <tr><td>{{ p.role }}</td><td class="mono">{{ p.pull_id }}</td><td><span class="status {{ p.hue }}">{{ p.state }}</span>{% if let Some(reason) = p.reason %} <span class="note read">{{ reason }}</span>{% endif %}</td><td>{{ p.done }} of {{ p.size }}</td></tr>
+  <tr><th>The {{ p.role }}, <span class="mono">{{ p.pull_id }}</span></th><td><span class="status {{ p.hue }}">{{ p.state }}</span>{% if let Some(reason) = p.reason %} <span class="note read">{{ reason }}</span>{% endif %}</td><td>{{ p.progress.done }} of {{ p.progress.size }}, {{ p.progress.percent }}%</td><td><progress value="{{ p.progress.value }}" max="{{ p.progress.max }}">{{ p.progress.percent }}%</progress></td></tr>
+  {%- for f in p.files %}
+  <tr><td class="mono">{{ f.name }}</td><td></td><td>{{ f.progress.done }} of {{ f.progress.size }}, {{ f.progress.percent }}%</td><td><progress value="{{ f.progress.value }}" max="{{ f.progress.max }}">{{ f.progress.percent }}%</progress></td></tr>
   {%- endfor %}
+  {%- endfor %}
+  <tr><th>In all</th><td></td><td>{{ pulls.total.done }} of {{ pulls.total.size }}, {{ pulls.total.percent }}%</td><td><progress value="{{ pulls.total.value }}" max="{{ pulls.total.max }}">{{ pulls.total.percent }}%</progress></td></tr>
   </tbody>
 </table>
 {%- endif %}

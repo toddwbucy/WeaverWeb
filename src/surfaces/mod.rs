@@ -168,13 +168,23 @@ pub(crate) const FIRST_PAGE: &str = "/agents";
 pub fn script_policy<S: Clone + Send + Sync + 'static>(router: Router<S>) -> Router<S> {
     router.layer(axum::middleware::map_response(
         |mut response: Response| async move {
-            response.headers_mut().insert(
-                header::CONTENT_SECURITY_POLICY,
-                HeaderValue::from_static("script-src 'self'"),
-            );
+            carry_script_policy(&mut response);
             response
         },
     ))
+}
+
+/// The policy's one value, which every answer carrying it takes from here.
+pub(crate) const SCRIPT_POLICY: &str = "script-src 'self'";
+
+/// Set the policy on one answer: the layer's, and an answer made outside
+/// it, as the `Origin` check's refusal is, since that check wraps the
+/// whole router from outside the surfaces' layers.
+pub(crate) fn carry_script_policy(response: &mut Response) {
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(SCRIPT_POLICY),
+    );
 }
 
 /// **The passkey ceremonies' browser module** (design section 4), one

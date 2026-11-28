@@ -1,0 +1,12 @@
+{#- **The `Origin` check's refusal** (Spec 2.8; the Planner's brief of
+    2026-11-28, part 3): the reason in plain words, what the browser sent,
+    and the address Weaver Web expects with a link to it. An htmx request
+    swaps this alone into its pane; a browser's post reads it under the
+    masthead. No inline script. -#}
+{%- match expected %}
+{%- when Some with (origin) %}
+<p class="note" role="alert"><span class="status fail">refused</span> Weaver Web changes nothing for a page opened at another address. {% match sent %}{% when Sent::One with (from) %}This page was opened at <span class="mono">{{ from }}</span>{% when Sent::None %}The browser named no address for this page{% when Sent::Many %}The browser named more than one address for this page{% endmatch %}, and Weaver Web is served at <span class="mono">{{ origin }}</span>, so nothing was changed.</p>
+<p><a href="{{ origin }}/">Open Weaver Web at {{ origin }}</a>, sign in there, and do it again.</p>
+{%- when None %}
+<p class="note" role="alert"><span class="status fail">refused</span> No origin is configured, so this server serves no request that changes state. Set <code>origin</code> in Weaver Web's config to the address it is served at, and start it again.</p>
+{%- endmatch %}

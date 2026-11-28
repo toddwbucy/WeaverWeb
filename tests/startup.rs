@@ -294,24 +294,24 @@ async fn real_server_starts_on_current_schema() {
     // 11, PR 4a), and this server has no origin configured: `POST
     // /sign-out`, always mounted, is refused there with the session's
     // cookie or without it, before any handler work.
-    let refused = (
-        403,
-        "no origin is configured, so this server serves no request that changes state".to_owned(),
-    );
+    // The refusal is a page saying so, under the masthead.
+    let refused = "No origin is configured, so this server serves no request that changes state.";
     for cookie in [None, Some(token.as_str())] {
+        let (status, body) = server.request("POST", "/sign-out", cookie);
         assert_eq!(
-            server.request("POST", "/sign-out", cookie),
-            refused,
+            status, 403,
             "POST /sign-out must be refused at the Origin check"
         );
+        assert!(body.contains(refused), "{body}");
         // A POST to an unrouted path meets the same check: the guard is a
         // layer over the whole router, the fallback included, so it never
         // reaches a handler or the fallback's 404.
+        let (status, body) = server.request("POST", "/admin/lifecycle/startup-check/start", cookie);
         assert_eq!(
-            server.request("POST", "/admin/lifecycle/startup-check/start", cookie),
-            refused,
+            status, 403,
             "a POST to an unrouted path must be refused at the Origin check"
         );
+        assert!(body.contains(refused), "{body}");
     }
     // **No route outside the surfaces stands**: these paths answer 404,
     // while the surfaces' own asset route serves htmx.

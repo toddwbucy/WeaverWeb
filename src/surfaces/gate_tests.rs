@@ -302,6 +302,152 @@ async fn send(
     (response.status(), response.headers().clone())
 }
 
+/// A POST to `uri` under `bearer`, with `origin` and the htmx header where
+/// asked, answered with its status, its script policy and its body.
+async fn post_read(
+    app: axum::Router,
+    uri: &str,
+    origin: Option<&str>,
+    htmx: bool,
+    bearer: &str,
+) -> (StatusCode, Option<String>, String) {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::COOKIE, format!("{}={bearer}", gate::COOKIE));
+    if let Some(origin) = origin {
+        request = request.header(header::ORIGIN, origin);
+    }
+    if htmx {
+        request = request.header("hx-request", "true");
+    }
+    let response = app
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let policy = response
+        .headers()
+        .get(header::CONTENT_SECURITY_POLICY)
+        .map(|v| v.to_str().unwrap().to_owned());
+    let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (status, policy, String::from_utf8(body.to_vec()).unwrap())
+}
+
+/// **The `Origin` check's refusal has a way back** (Spec 2.8; the Planner's
+/// brief of 2026-11-28, part 3): a browser's post from another address is
+/// answered 403 with a page under the masthead, the reason in plain words,
+/// the address it was opened at, and the configured origin with a link to
+/// it, and changes nothing; with no origin sent it says so; an htmx request
+/// is answered the refusal alone; with no origin configured the page says
+/// so and links nowhere. **Each carries the surfaces' script policy**,
+/// though made outside their layers, and **an address carrying markup is
+/// drawn escaped**, never as markup.
+///
+/// Perturbations: answer bare text again, and the page is not framed; drop
+/// the link, and it is missing; answer an htmx request the whole page, and
+/// the fragment holds the masthead; drop the policy from the refusal, and
+/// it carries none; draw the address sent unescaped, and the crafted
+/// address's script tag stands raw in the page.
+#[tokio::test]
+async fn the_origin_refusal_is_a_page_with_a_way_back() {
+    let Some(fresh) = fresh_store().await else {
+        return;
+    };
+    let s = &fresh.store;
+    let (bearer, ..) = open(s, "ada").await;
+    let link = r#"<p><a href="https://weaver.test/">Open Weaver Web at https://weaver.test</a>, sign in there, and do it again.</p>"#;
+
+    let script = Some(super::SCRIPT_POLICY.to_owned());
+    assert_eq!(super::SCRIPT_POLICY, "script-src 'self'");
+    let (status, csp, page) = post_read(
+        app(s, policy()),
+        "/sign-out",
+        Some("https://elsewhere.test"),
+        false,
+        &bearer,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(csp, script, "the refusal carries the script policy");
+    super::assert_framed(&page);
+    assert!(
+        page.contains("<h1>Refused at another address</h1>"),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<p class="note" role="alert"><span class="status fail">refused</span> Weaver Web changes nothing for a page opened at another address. This page was opened at <span class="mono">https://elsewhere.test</span>, and Weaver Web is served at <span class="mono">https://weaver.test</span>, so nothing was changed.</p>"#),
+        "{page}"
+    );
+    assert!(page.contains(link), "{page}");
+    assert!(!closed(s, &bearer).await, "the refusal changed nothing");
+
+    let (_, csp, page) = post_read(app(s, policy()), "/sign-out", None, false, &bearer).await;
+    assert_eq!(csp, script);
+    assert!(
+        page.contains("The browser named no address for this page, and Weaver Web is served at"),
+        "{page}"
+    );
+    assert!(page.contains(link), "{page}");
+
+    let (status, csp, fragment) = post_read(
+        app(s, policy()),
+        "/sign-out",
+        Some("https://elsewhere.test"),
+        true,
+        &bearer,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(csp, script, "the fragment carries the script policy");
+    assert!(fragment.contains(link), "{fragment}");
+    assert!(
+        !fragment.contains("masthead"),
+        "the refusal alone: {fragment}"
+    );
+    assert!(!fragment.contains("<html"), "{fragment}");
+
+    let mut unconfigured = policy();
+    unconfigured.origin = None;
+    let (status, csp, page) = post_read(
+        app(s, unconfigured),
+        "/sign-out",
+        Some("https://weaver.test"),
+        false,
+        &bearer,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    super::assert_framed(&page);
+    assert!(
+        page.contains(
+            "No origin is configured, so this server serves no request that changes state."
+        ),
+        "{page}"
+    );
+    assert!(!page.contains("Open Weaver Web at"), "{page}");
+    assert_eq!(csp, script);
+    assert!(!closed(s, &bearer).await);
+
+    // **A crafted address is drawn as text**: a quote, angle brackets and a
+    // script tag, each a byte a header value may carry, stand escaped.
+    let crafted = r#"https://x.test"><script>alert('o')</script>"#;
+    let (status, _, page) =
+        post_read(app(s, policy()), "/sign-out", Some(crafted), false, &bearer).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        page.contains(
+            r#"This page was opened at <span class="mono">https://x.test&#34;&#62;&#60;script&#62;alert(&#39;o&#39;)&#60;/script&#62;</span>"#
+        ),
+        "{page}"
+    );
+    assert!(!page.contains("<script>alert"), "{page}");
+    assert!(!page.contains(crafted), "{page}");
+    assert!(!closed(s, &bearer).await);
+}
+
 /// **Every request that changes state carries the configured origin or is
 /// refused before its handler** (design section 6): a POST from another
 /// origin, with none, or with two is refused and changes nothing, one with

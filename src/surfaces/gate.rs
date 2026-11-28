@@ -734,26 +734,82 @@ pub async fn sign_out(State(store): State<Store>, headers: HeaderMap) -> Respons
 /// cookie off another site's request; this keeps another site's request
 /// from changing anything at all. **With no origin configured, nothing that
 /// changes state is served**, since nothing can sign in without one.
+///
+/// **The refusal has a way back** (the Planner's brief of 2026-11-28, part
+/// 3: an operator who opened Weaver Web by another address had every post
+/// refused with no hint why): a page with the masthead, the reason in plain
+/// words, the address the browser sent, and the address Weaver Web expects,
+/// the configured origin, with a link to it. An htmx request is answered
+/// the refusal alone, the fragment its pane swaps in. The check is as
+/// strict as before, and the status stays 403. The refusal carries the
+/// surfaces' script policy, and the address sent is escaped as page text.
 pub async fn origin_check(State(policy): State<Policy>, request: Request, next: Next) -> Response {
     if matches!(*request.method(), Method::GET | Method::HEAD) {
         return next.run(request).await;
     }
-    let Some(origin) = &policy.origin else {
-        return (
-            StatusCode::FORBIDDEN,
-            "no origin is configured, so this server serves no request that changes state",
-        )
-            .into_response();
-    };
     let mut sent = request.headers().get_all(header::ORIGIN).iter();
-    match (sent.next(), sent.next()) {
-        (Some(only), None) if only.as_bytes() == origin.as_bytes() => next.run(request).await,
-        _ => (
-            StatusCode::FORBIDDEN,
-            "a request that changes state is served only from this server's own origin",
-        )
-            .into_response(),
+    let (first, second) = (sent.next(), sent.next());
+    if let (Some(origin), Some(only), None) = (&policy.origin, first, second)
+        && only.as_bytes() == origin.as_bytes()
+    {
+        return next.run(request).await;
     }
+    let htmx = request.headers().contains_key("hx-request");
+    let refusal = OriginRefusal {
+        expected: policy.origin.clone(),
+        sent: match (first, second) {
+            (None, _) => Sent::None,
+            (Some(only), None) => Sent::One(String::from_utf8_lossy(only.as_bytes()).into_owned()),
+            (Some(_), Some(_)) => Sent::Many,
+        },
+    };
+    let rendered = if htmx {
+        askama::Template::render(&refusal)
+    } else {
+        askama::Template::render(&OriginRefusedPage {
+            here: "refused",
+            who: String::new(),
+            admin: false,
+            chrome: super::Chrome::default(),
+            refusal,
+        })
+    };
+    let mut answer = match rendered {
+        Ok(html) => (StatusCode::FORBIDDEN, axum::response::Html(html)).into_response(),
+        Err(e) => crate::fault::Fault::from(anyhow::Error::new(e)).into_response(),
+    };
+    // The surfaces' policy, from its one source: this answer is made
+    // outside their layers, since the check wraps the whole router.
+    super::carry_script_policy(&mut answer);
+    answer
+}
+
+/// What the browser sent as its `Origin`.
+enum Sent {
+    None,
+    One(String),
+    Many,
+}
+
+/// **The `Origin` check's refusal, in plain words**: why, what was sent,
+/// and where Weaver Web is served from, with a link there, or that no
+/// origin is configured.
+#[derive(askama::Template)]
+#[template(path = "origin_refusal.html")]
+struct OriginRefusal {
+    expected: Option<String>,
+    sent: Sent,
+}
+
+/// The refusal drawn as a page of no tab, under the masthead.
+#[derive(askama::Template)]
+#[template(path = "origin_refused.html")]
+struct OriginRefusedPage {
+    here: &'static str,
+    who: String,
+    admin: bool,
+    chrome: super::Chrome,
+    refusal: OriginRefusal,
 }
 
 /// The `Origin` check laid over a whole router, the server's and a test's

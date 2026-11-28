@@ -3474,20 +3474,47 @@ async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_na
 /// the name as typed and the chosen appliance kept, and the code's field
 /// empty. Each is still no miss: no record, no setup, the appliance still
 /// listed with every try left. Whoever is not an admin is answered as New
-/// agent's own page answers them, with no record.
+/// agent's own page answers them, with no record. **Each refusal stands at
+/// the top of the form, in a fail status**, the form posting to
+/// `/pair#finalize` so the browser lands there, **and each is logged** with
+/// its refusal and the admin who posted, the code never (the Planner's brief
+/// of 2026-11-28, part 2), the code's miss after them too.
 ///
 /// Perturbation: answer the four with bare text, as before, and the first
-/// post's body is the words alone, with no form (measured 2026-11-26).
+/// post's body is the words alone, with no form (measured 2026-11-26); draw
+/// the refusal above the panes again, or post to `/pair` with no fragment,
+/// and the first fails at the form's top; drop the log line, and the first
+/// is not logged (each measured 2026-11-28).
 #[tokio::test]
 async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
+    let logs = crate::test_log::Captured::default();
+    let _logging = crate::test_log::scoped(
+        tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .finish(),
+    );
     let Some(rig) = rig().await else { return };
     let s = rig.store();
-    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (ada_id, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, bea) = crate::admin_tests::signed_in(&rig.app, s, &mut authenticator(), "bea").await;
     let dialed = dial(&rig, &box_keys("box-a").claim).await;
     let code = dialed.code().to_string();
     let a = handle_of(&rig, "box-a").await;
     let refused_name = crate::store::setup::agent_name("9karl").unwrap_err();
+    let logged = |refusal: &str| {
+        let text = String::from_utf8_lossy(&logs.0.lock().unwrap()).into_owned();
+        text.lines()
+            .filter(|line| {
+                line.contains("WARN")
+                    && line.contains("New agent's Finalize was refused")
+                    && line.contains(&format!("refusal=\"{refusal}\""))
+                    && line.contains(&format!("by={ada_id}"))
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
     for (name, appliance, typed, compared, words, kept) in [
         ("9karl", a.as_str(), code.as_str(), "on", refused_name, true),
         (
@@ -3503,7 +3530,7 @@ async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
             a.as_str(),
             "abc",
             "on",
-            "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the SSH session shows it: check it and type it again",
+            "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the appliance&#39;s console shows it: check it and type it again",
             true,
         ),
         (
@@ -3522,7 +3549,13 @@ async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
         let (status, _, body) = send_as(&rig.app, "POST", "/pair", Some(form(&fields)), &ada).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{words}: {body}");
         assert!(body.contains("<h1>New agent</h1>"), "{words}: {body}");
-        assert!(body.contains(words), "{words}: {body}");
+        assert!(
+            body.contains(&format!(
+                "<form method=\"post\" action=\"/pair#finalize\" id=\"finalize\" class=\"stack\">\n<p class=\"note\" role=\"alert\"><span class=\"status fail\">fail</span> {words}</p>"
+            )),
+            "{words}: at the top of the form: {body}"
+        );
+        assert_eq!(body.matches(r#"role="alert""#).count(), 1, "{words}");
         assert!(
             body.contains(&format!(r#"name="name" value="{name}""#)),
             "{words}: the name kept: {body}"
@@ -3560,6 +3593,18 @@ async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
     let (status, _, body) = finalize(&rig, &ada, "karl", &a, wrong).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("2 tries are left on it."), "{body}");
+    for refusal in [
+        "malformed name",
+        "no appliance",
+        "malformed code",
+        "not compared",
+        "code missed",
+    ] {
+        let lines = logged(refusal);
+        assert_eq!(lines.len(), 1, "{refusal}: {lines:?}");
+        assert!(!lines[0].contains(&code), "the code is never logged");
+    }
+    assert!(logged("malformed name")[0].contains(r#"name="9karl""#));
     drop(dialed);
 }
 

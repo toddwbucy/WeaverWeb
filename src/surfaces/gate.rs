@@ -741,7 +741,8 @@ pub async fn sign_out(State(store): State<Store>, headers: HeaderMap) -> Respons
 /// words, the address the browser sent, and the address Weaver Web expects,
 /// the configured origin, with a link to it. An htmx request is answered
 /// the refusal alone, the fragment its pane swaps in. The check is as
-/// strict as before, and the status stays 403.
+/// strict as before, and the status stays 403. The refusal carries the
+/// surfaces' script policy, and the address sent is escaped as page text.
 pub async fn origin_check(State(policy): State<Policy>, request: Request, next: Next) -> Response {
     if matches!(*request.method(), Method::GET | Method::HEAD) {
         return next.run(request).await;
@@ -773,10 +774,14 @@ pub async fn origin_check(State(policy): State<Policy>, request: Request, next: 
             refusal,
         })
     };
-    match rendered {
+    let mut answer = match rendered {
         Ok(html) => (StatusCode::FORBIDDEN, axum::response::Html(html)).into_response(),
         Err(e) => crate::fault::Fault::from(anyhow::Error::new(e)).into_response(),
-    }
+    };
+    // The surfaces' policy, from its one source: this answer is made
+    // outside their layers, since the check wraps the whole router.
+    super::carry_script_policy(&mut answer);
+    answer
 }
 
 /// What the browser sent as its `Origin`.

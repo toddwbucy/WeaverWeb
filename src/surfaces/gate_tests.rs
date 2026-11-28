@@ -303,14 +303,14 @@ async fn send(
 }
 
 /// A POST to `uri` under `bearer`, with `origin` and the htmx header where
-/// asked, answered with its status and its body.
+/// asked, answered with its status, its script policy and its body.
 async fn post_read(
     app: axum::Router,
     uri: &str,
     origin: Option<&str>,
     htmx: bool,
     bearer: &str,
-) -> (StatusCode, String) {
+) -> (StatusCode, Option<String>, String) {
     let mut request = Request::builder()
         .method("POST")
         .uri(uri)
@@ -326,10 +326,14 @@ async fn post_read(
         .await
         .unwrap();
     let status = response.status();
+    let policy = response
+        .headers()
+        .get(header::CONTENT_SECURITY_POLICY)
+        .map(|v| v.to_str().unwrap().to_owned());
     let body = axum::body::to_bytes(response.into_body(), 1 << 20)
         .await
         .unwrap();
-    (status, String::from_utf8(body.to_vec()).unwrap())
+    (status, policy, String::from_utf8(body.to_vec()).unwrap())
 }
 
 /// **The `Origin` check's refusal has a way back** (Spec 2.8; the Planner's
@@ -338,11 +342,15 @@ async fn post_read(
 /// the address it was opened at, and the configured origin with a link to
 /// it, and changes nothing; with no origin sent it says so; an htmx request
 /// is answered the refusal alone; with no origin configured the page says
-/// so and links nowhere.
+/// so and links nowhere. **Each carries the surfaces' script policy**,
+/// though made outside their layers, and **an address carrying markup is
+/// drawn escaped**, never as markup.
 ///
 /// Perturbations: answer bare text again, and the page is not framed; drop
 /// the link, and it is missing; answer an htmx request the whole page, and
-/// the fragment holds the masthead.
+/// the fragment holds the masthead; drop the policy from the refusal, and
+/// it carries none; draw the address sent unescaped, and the crafted
+/// address's script tag stands raw in the page.
 #[tokio::test]
 async fn the_origin_refusal_is_a_page_with_a_way_back() {
     let Some(fresh) = fresh_store().await else {
@@ -352,7 +360,9 @@ async fn the_origin_refusal_is_a_page_with_a_way_back() {
     let (bearer, ..) = open(s, "ada").await;
     let link = r#"<p><a href="https://weaver.test/">Open Weaver Web at https://weaver.test</a>, sign in there, and do it again.</p>"#;
 
-    let (status, page) = post_read(
+    let script = Some(super::SCRIPT_POLICY.to_owned());
+    assert_eq!(super::SCRIPT_POLICY, "script-src 'self'");
+    let (status, csp, page) = post_read(
         app(s, policy()),
         "/sign-out",
         Some("https://elsewhere.test"),
@@ -361,6 +371,7 @@ async fn the_origin_refusal_is_a_page_with_a_way_back() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(csp, script, "the refusal carries the script policy");
     super::assert_framed(&page);
     assert!(
         page.contains("<h1>Refused at another address</h1>"),
@@ -373,14 +384,15 @@ async fn the_origin_refusal_is_a_page_with_a_way_back() {
     assert!(page.contains(link), "{page}");
     assert!(!closed(s, &bearer).await, "the refusal changed nothing");
 
-    let (_, page) = post_read(app(s, policy()), "/sign-out", None, false, &bearer).await;
+    let (_, csp, page) = post_read(app(s, policy()), "/sign-out", None, false, &bearer).await;
+    assert_eq!(csp, script);
     assert!(
         page.contains("The browser named no address for this page, and Weaver Web is served at"),
         "{page}"
     );
     assert!(page.contains(link), "{page}");
 
-    let (status, fragment) = post_read(
+    let (status, csp, fragment) = post_read(
         app(s, policy()),
         "/sign-out",
         Some("https://elsewhere.test"),
@@ -389,6 +401,7 @@ async fn the_origin_refusal_is_a_page_with_a_way_back() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(csp, script, "the fragment carries the script policy");
     assert!(fragment.contains(link), "{fragment}");
     assert!(
         !fragment.contains("masthead"),
@@ -398,7 +411,7 @@ async fn the_origin_refusal_is_a_page_with_a_way_back() {
 
     let mut unconfigured = policy();
     unconfigured.origin = None;
-    let (status, page) = post_read(
+    let (status, csp, page) = post_read(
         app(s, unconfigured),
         "/sign-out",
         Some("https://weaver.test"),
@@ -415,6 +428,23 @@ async fn the_origin_refusal_is_a_page_with_a_way_back() {
         "{page}"
     );
     assert!(!page.contains("Open Weaver Web at"), "{page}");
+    assert_eq!(csp, script);
+    assert!(!closed(s, &bearer).await);
+
+    // **A crafted address is drawn as text**: a quote, angle brackets and a
+    // script tag, each a byte a header value may carry, stand escaped.
+    let crafted = r#"https://x.test"><script>alert('o')</script>"#;
+    let (status, _, page) =
+        post_read(app(s, policy()), "/sign-out", Some(crafted), false, &bearer).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        page.contains(
+            r#"This page was opened at <span class="mono">https://x.test&#34;&#62;&#60;script&#62;alert(&#39;o&#39;)&#60;/script&#62;</span>"#
+        ),
+        "{page}"
+    );
+    assert!(!page.contains("<script>alert"), "{page}");
+    assert!(!page.contains(crafted), "{page}");
     assert!(!closed(s, &bearer).await);
 }
 

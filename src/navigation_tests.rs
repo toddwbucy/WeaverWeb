@@ -610,8 +610,10 @@ async fn the_registers_form_fills_a_name_of_its_grammar_alone() {
 }
 
 /// **The retired screens answer not found** (the Planner's brief of
-/// 2026-11-28, part 5): the declaration screen's routes and the SSH keys
-/// page's, to an admin, each 404 as any path no surface serves.
+/// 2026-11-28, part 5): the declaration screen's bare routes and the SSH
+/// keys page's, to an admin, each 404 as any path no surface serves. Each
+/// is a request the retired route answered otherwise (a page, a redirect
+/// or a refusal), so each case can fail.
 ///
 /// Perturbation: serve `/declarations` again, or `/admin/ssh-key`, and its
 /// case answers.
@@ -625,11 +627,9 @@ async fn the_retired_screens_answer_not_found() {
     for (method, uri) in [
         ("GET", "/declarations"),
         ("GET", "/declarations/new"),
-        ("GET", "/declarations/de-00000000000000aa"),
         ("POST", "/declarations"),
         ("GET", "/admin/ssh-key"),
         ("POST", "/admin/ssh-key"),
-        ("POST", "/admin/ssh-key/sk-00000000000000aa/remove"),
     ] {
         let body = (method == "POST").then(|| form(&[("line", "x")]));
         let (status, _, page) = send_as(&rig.app, method, uri, body, &ada).await;

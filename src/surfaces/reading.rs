@@ -346,6 +346,10 @@ async fn readable(
 /// by name, with one plain word for where it stands and the way to it.
 struct ListRow {
     label: String,
+    /// **Beside a retired agent's label, that it is retired and its
+    /// identity**, since a name retired and registered again is two rows of
+    /// the same box and name, and this tells them apart.
+    note: Option<String>,
     href: String,
     state: String,
     /// Its open alerts, on an agent the person holds a grant on.
@@ -475,10 +479,14 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
             setup_of.insert(agent_id.clone(), (setup, *declared));
         }
     }
-    let mut rows: Vec<(String, String, ListRow)> = agents
+    // Sorted by name and box, the live row before a retired one of the same
+    // box and name, and then by identity, so the order is fixed.
+    let mut rows: Vec<((String, String, bool, String), ListRow)> = agents
         .iter()
         .map(|a| {
             let id = a.agent_id.as_str();
+            let retired =
+                a.gate.state != CredentialState::Live && a.admin.state != CredentialState::Live;
             let granted = readable.iter().any(|r| r.agent_id == a.agent_id);
             let setup = setup_of.get(id).copied();
             let href = match setup {
@@ -487,10 +495,10 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
                 _ => "/admin/agents".to_owned(),
             };
             (
-                a.name.clone(),
-                a.r#box.clone(),
+                (a.name.clone(), a.r#box.clone(), retired, id.to_owned()),
                 ListRow {
                     label: format!("{}/{}", a.r#box, a.name),
+                    note: retired.then(|| format!("retired, {id}")),
                     href,
                     state: state_word(Some(a), setup, granted),
                     alerts: if granted { open_on(id) } else { 0 },
@@ -501,10 +509,15 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     if admin {
         for (setup, declared) in setups.iter().filter(|(s, _)| s.in_pairing_step()) {
             rows.push((
-                setup.name.clone(),
-                String::new(),
+                (
+                    setup.name.clone(),
+                    String::new(),
+                    false,
+                    setup.setup_id.clone(),
+                ),
                 ListRow {
                     label: setup.name.clone(),
+                    note: None,
                     href: super::setup::declaration_href(setup),
                     state: state_word(None, Some((setup, *declared)), false),
                     alerts: 0,
@@ -512,13 +525,13 @@ async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
             ));
         }
     }
-    rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
     match (ListPage {
         here: "agents",
         who: session.name,
         admin,
         chrome,
-        rows: rows.into_iter().map(|(_, _, row)| row).collect(),
+        rows: rows.into_iter().map(|(_, row)| row).collect(),
     })
     .render()
     {

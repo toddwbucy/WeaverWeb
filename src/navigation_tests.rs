@@ -303,7 +303,11 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
 /// Perturbations: say the load state without a grant, and jane reads
 /// loaded to the admin; drop the button's admin condition, and bea's page
 /// holds it; open an admin's setup row at its agent page, and mara's row
-/// fails; leave the setups in their pairing step out, and otto is missing.
+/// fails; leave the setups in their pairing step out, and otto is missing;
+/// list every open setup as a row of its own, paired ones too, and the
+/// count of rows fails, since a paired agent is one row; sort the retired
+/// ivan before the live one, and the order fails; drop the retired row's
+/// note, and it is missing.
 #[tokio::test]
 async fn the_agents_list_names_each_agent_by_one_word_and_opens_its_declaration() {
     let Some(rig) = rig().await else {
@@ -350,6 +354,11 @@ async fn the_agents_list_names_each_agent_by_one_word_and_opens_its_declaration(
     )
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    // **A name retired and registered again** is two rows of one box and
+    // name: the live row first, the retired one saying so and naming its
+    // identity beside its label.
+    let (ivan_again, _) = rig.register(&ada, "box-d", "ivan").await;
+    assert_ne!(ivan_again, ivan);
     for agent in [&jane, &mara] {
         sqlx::query(
             "UPDATE agent SET load_state = 'loaded', load_state_at = now() WHERE agent_id = $1",
@@ -367,6 +376,9 @@ async fn the_agents_list_names_each_agent_by_one_word_and_opens_its_declaration(
     let row = |href: &str, label: &str, state: &str| {
         format!("<td><a href=\"{href}\">{label}</a></td>\n      <td>{state}</td>")
     };
+    let retired = format!(
+        "<td><a href=\"/admin/agents\">box-d/ivan</a> <span class=\"mono\">retired, {ivan}</span></td>\n      <td>retired</td>"
+    );
     let in_order = |page: &str, rows: &[String]| {
         let mut from = 0;
         for want in rows {
@@ -383,7 +395,8 @@ async fn the_agents_list_names_each_agent_by_one_word_and_opens_its_declaration(
     in_order(
         &list,
         &[
-            row("/admin/agents", "box-d/ivan", "retired"),
+            row("/admin/agents", "box-d/ivan", "registered"),
+            retired.clone(),
             row("/admin/agents", "box-c/jane", "registered"),
             row(
                 &format!("/setup/{}/directories", setups["karl"]),
@@ -410,8 +423,8 @@ async fn the_agents_list_names_each_agent_by_one_word_and_opens_its_declaration(
     let body = main(&list);
     assert_eq!(
         body.matches("<tr>").count(),
-        7,
-        "six rows and the head: {body}"
+        8,
+        "seven rows and the head: {body}"
     );
     assert_eq!(
         body.matches(r#"<section class="pane">"#).count(),

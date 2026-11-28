@@ -1,0 +1,7 @@
+{#- **The theme selector** (Spec 2.8; `src/surfaces/theme.rs`): the six
+    themes of the design system and auto, at the masthead's right. No option
+    is marked here: the server marks the browser's choice, and sets
+    `data-theme` on the root, before the page leaves, so it is never drawn
+    in another theme first. htmx posts the choice on change and reloads on
+    the answer; without htmx, the button in `noscript` posts it. -#}
+<form method="post" action="/theme" class="theme"><select name="theme" aria-label="Theme" hx-post="/theme" hx-trigger="change"><option value="auto">Auto</option><option value="slate">Slate</option><option value="graphite">Graphite</option><option value="umber">Umber</option><option value="chalk">Chalk</option><option value="mist">Mist</option><option value="paper">Paper</option></select><noscript><button type="submit">Set theme</button></noscript></form>

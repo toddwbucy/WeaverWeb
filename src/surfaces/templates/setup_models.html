@@ -1,10 +1,14 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
-{#- The models page (Spec 6.2): the roster's two roles, the rest of
-    the roster drawn unbuilt, a repository asked at a branch with its
-    choices, each complete one's header its own fragment with the pick's
-    form, and the setup's pulls with the base's identity, a fragment the
-    page re-fetches every 15 s. No inline script. -#}
+{#- The models page and the adapter's page (Spec 6.2), in the order of
+    the work: Models picks the decoder, the rest of the roster drawn
+    unbuilt; Adapter, the step after it, picks an adapter or none. Each
+    asks a repository at a branch and lists its choices by name, each a
+    <details> opening to its parts and its header, a fragment read when
+    the choice is first opened, with the pick's form for the page's role.
+    The downloads, each file's bytes done of its size with a percentage
+    and a bar and the same in all, and the base's identity, are a fragment
+    both pages re-fetch every 3 s. No inline script. -#}
 {#- The adapter is optional: its pane is ok with none picked, the agent
     then loading its base alone, and a picked one is dropped by its own
     form while the setup is open. -#}
@@ -36,7 +40,7 @@
   </form>
   {%- endif %}
   {%- else if role.optional %}
-  <p>No {{ role.name }} is picked: the agent loads its base alone.</p>
+  <p>No {{ role.name }} is picked: the agent loads its base alone. Pick one from a repository below, or go on to Placement with none.</p>
   {%- else %}
   <p>No {{ role.name }} is picked.</p>
   {%- endif %}
@@ -52,6 +56,7 @@
   {%- endif %}
 </section>
 {%- endfor %}
+{%- if !adapter_step %}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>Beyond one decoder and one adapter</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
   <div class="body">
@@ -65,15 +70,16 @@
   </div>
   <footer>Waits on a ruling that widens the roster beyond one decoder and at most one adapter.</footer>
 </section>
+{%- endif %}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>A repository</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">Hugging Face's listing</span></header>
   <div class="body">
-  <form method="get" action="/setup/{{ frame.setup_id }}/models" class="field">
+  <form method="get" action="/setup/{{ frame.setup_id }}/{{ step }}" class="field">
     <label>Repository <input type="text" name="repository" placeholder="owner/name" required{% if let Some(l) = listing %} value="{{ l.repository }}"{% endif %}></label>
     <label>Branch <input type="text" name="revision" placeholder="main" required{% if let Some(l) = listing %} value="{{ l.revision }}"{% endif %}></label>
     <button type="submit">List its choices</button>
   </form>
-  <p>A tag or a 40-hex commit is taken in the branch's place too.</p>
+  <p>A tag or a 40-hex commit is taken in the branch's place too.{% if adapter_step %} The adapter's pick is offered here alone, after the model's.{% else %} The model's pick is offered here, and the adapter's step follows it.{% endif %}</p>
   {%- if let Some(why) = no_pick %}
   <p><span class="status fail">no pick</span> {{ why }}</p>
   {%- endif %}
@@ -97,30 +103,34 @@
   <p>The repository holds no .gguf file at this commit.</p>
   {%- endif %}
   {%- for c in l.choices %}
-  <div class="choice">
-    <h3 class="mono">{{ c.name }}</h3>
-    <p>{{ c.parts }} part{% if c.parts != 1 %}s{% endif %}, {{ c.size }}</p>
+  <details class="choice">
+    <summary><span class="mono">{{ c.name }}</span>, {{ c.parts }} part{% if c.parts != 1 %}s{% endif %}, {{ c.size }}</summary>
+    <ul>
+      {%- for (path, size) in c.files %}
+      <li><span class="mono">{{ path }}</span>, {{ size }}</li>
+      {%- endfor %}
+    </ul>
     {%- if let Some(missing) = c.missing %}
     <p><span class="status fail">no pick</span> {{ missing }}</p>
     {%- else if let Some(href) = c.header_href %}
-    <div hx-get="{{ href }}" hx-trigger="load" hx-swap="outerHTML"><p>Reading its header.</p></div>
+    <div hx-get="{{ href }}" hx-trigger="toggle from:closest details" hx-swap="outerHTML"><p>Its header is read when this opens.</p></div>
     {%- endif %}
-  </div>
+  </details>
   {%- endfor %}
   {%- endif %}
   </div>
   {%- if l.gated.is_some() %}
   <footer>Waits on the repository's terms, accepted on Hugging Face by the connected account.</footer>
   {%- else %}
-  <footer>Each header is read by range through the commit, 16 MiB at most, before any download.</footer>
+  <footer>Each file opens on a click. Its header is read by range through the commit, 16 MiB at most, before any download.</footer>
   {%- endif %}
 </section>
 {%- endif %}
 <section class="pane">
-  <header><span class="stage"><b>1</b> Declare</span><h2>The pulls and the base's identity</h2><span class="backing built">built</span>{% if pulls.pulls.is_empty() %}<span class="status hold">hold</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the puller, and the console's hash of the cached parts</span></header>
-  <div class="body" id="pulls" hx-get="/setup/{{ frame.setup_id }}/models/pull" hx-trigger="every 15s" hx-swap="innerHTML">{% include "setup_models_pull.html" %}</div>
+  <header><span class="stage"><b>1</b> Declare</span><h2>The downloads and the base's identity</h2><span class="backing built">built</span>{% if pulls.pulls.is_empty() %}<span class="status hold">hold</span>{% else %}<span class="status ok">ok</span>{% endif %}<span class="source">the puller, and the console's hash of the cached parts</span></header>
+  <div class="body" id="pulls" hx-get="/setup/{{ frame.setup_id }}/models/pull" hx-trigger="every 3s" hx-swap="innerHTML">{% include "setup_models_pull.html" %}</div>
   {%- if pulls.pulls.is_empty() %}
-  <footer>Waits on a pick, which asks a pull.</footer>
+  <footer>Waits on a pick: a file's download starts at its pick.</footer>
   {%- else %}
   <footer>The box's pull from the cache is the enrollment's frame.</footer>
   {%- endif %}

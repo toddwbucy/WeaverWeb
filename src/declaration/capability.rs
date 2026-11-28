@@ -1,4 +1,4 @@
-//! conforms: web-a-class-spanning-capabilities-is-warned-of
+//! conforms: web-the-capability-table-is-the-page-as-read
 //!
 //! **The compute-capability table** (Spec 6.1): each card model with its
 //! compute capability and, where a source ties it to one, its family, every
@@ -6,7 +6,7 @@
 //! cited beside it. A model whose capability no citable source confirms is
 //! left out, since a model the table does not know is admitted anyway and
 //! named "capability unknown" (Spec 6.1). The table is read for the one
-//! warning the declaration screen gives, a class spanning more than one
+//! warning a document's check gives, a class spanning more than one
 //! compute capability, and for nothing else: it never refuses.
 //!
 //! **Read on 2026-11-11.** The capabilities are NVIDIA's CUDA GPUs page,

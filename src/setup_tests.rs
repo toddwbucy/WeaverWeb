@@ -660,7 +660,6 @@ async fn a_person_without_an_admin_grant_is_refused_before_any_setup_is_looked_u
     let unknown = "st-0123456789abcdef";
 
     for uri in [
-        "/setup".to_owned(),
         "/pair".to_owned(),
         format!("/pair/{setup}"),
         format!("/setup/{setup}/models"),
@@ -740,26 +739,23 @@ async fn a_second_open_setup_of_one_name_is_refused() {
     let (status, _, other) = begin(rig.store(), &ada, "otto").await;
     assert_eq!(status, StatusCode::SEE_OTHER, "another name opens its own");
     assert_ne!(other, first);
-    // **A setup begun the old way is listed by New agent and not by
-    // Declarations** while its box is unpaired: New agent lists it under
-    // Setups not yet paired, with a link to its own Pair page (the review
-    // of pull request 214, findings 5 and 6), and Declarations lists paired
-    // setups alone. Its Pair page serves it, by that link.
+    // **A setup begun the old way is listed by New agent** while its box is
+    // unpaired: New agent lists it under Setups not yet paired, with a link
+    // to its own Pair page (the review of pull request 214, findings 5 and
+    // 6), as the Agents list does (`navigation_tests`). Its Pair page
+    // serves it, by that link.
     let pair = page(&rig.app, "/pair", &ada).await;
-    let start = page(&rig.app, "/setup", &ada).await;
     for setup in [first.unwrap(), other.unwrap()] {
         assert!(pair.contains(&format!(r#"href="/pair/{setup}""#)), "{pair}");
-        assert!(!start.contains(&setup), "{start}");
         let own = page(&rig.app, &format!("/pair/{setup}"), &ada).await;
         assert!(own.contains("<h1>Pair "), "{own}");
     }
-    assert!(start.contains("<p>No declaration is open.</p>"), "{start}");
 }
 
 /// **Every pane of every page carries its stage, its backing and its
 /// status**, and a held pane names what it waits on with no input holding
-/// a value, over every page this tree serves in each state it draws: the
-/// start page, New agent (held, the rig serving no pairing; walked live in
+/// a value, over every page of the setup in each state it draws: New
+/// agent (held, the rig serving no pairing; walked live in
 /// `new_agent_holds_what_an_agent_needs_the_steps_and_one_form`), the Pair
 /// page before
 /// and after its box is paired, as a virtual machine at a loopback address
@@ -780,7 +776,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
-    let mut walked = vec![("/setup".to_owned(), page(&rig.app, "/setup", &ada).await)];
+    let mut walked = Vec::new();
     let mut new_agent = vec![("/pair".to_owned(), page(&rig.app, "/pair", &ada).await)];
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
@@ -793,7 +789,16 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         "{shown}"
     );
     new_agent.push(("the Pair page, paired".to_owned(), shown));
-    for p in ["directories", "models", "placement", "confirm", "build"] {
+    // The adapter's page is walked last of the six, so the indexes the
+    // checks below read stand as they stood before it.
+    for p in [
+        "directories",
+        "models",
+        "placement",
+        "confirm",
+        "build",
+        "adapter",
+    ] {
         let uri = format!("/setup/{setup}/{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
     }
@@ -817,18 +822,8 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     let warned = page(&every.app, &format!("/pair/{}", other.unwrap()), &bea).await;
     assert!(warned.contains("an unspecified address"), "{warned}");
     new_agent.push(("the Pair page, unspecified".to_owned(), warned));
-    let key = crate::ssh_key_tests::line("ssh-ed25519", 1);
-    let (status, _, body) = send_as(
-        &rig.app,
-        "POST",
-        "/admin/ssh-key",
-        Some(form(&[("line", &key)])),
-        &ada,
-    )
-    .await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     walked.push((
-        "the directories page, a key held".to_owned(),
+        "the directories page, read again".to_owned(),
         page(&rig.app, &format!("/setup/{setup}/directories"), &ada).await,
     ));
 
@@ -844,26 +839,33 @@ async fn every_pane_carries_its_stage_backing_and_status() {
             "{uri}: no setup rail"
         );
     }
-    // Every page of a setup carries the rail of its five pages in order,
+    // Every page of a setup carries the rail of its six pages in order,
     // the current one marked, each served, and none of them Pairing.
-    let directories = &walked[1].1;
+    let directories = &walked[0].1;
     let rail = between(directories, r#"<nav class="rail""#, "</nav>").unwrap();
-    let order: Vec<usize> = ["Directories", "Models", "Placement", "Confirm", "Build"]
-        .iter()
-        .map(|t| {
-            rail.find(&format!("</span> {t}"))
-                .unwrap_or_else(|| panic!("{t}: {rail}"))
-        })
-        .collect();
+    let order: Vec<usize> = [
+        "Directories",
+        "Models",
+        "Adapter",
+        "Placement",
+        "Confirm",
+        "Build",
+    ]
+    .iter()
+    .map(|t| {
+        rail.find(&format!("</span> {t}"))
+            .unwrap_or_else(|| panic!("{t}: {rail}"))
+    })
+    .collect();
     assert!(order.windows(2).all(|w| w[0] < w[1]), "{rail}");
-    assert_eq!(rail.matches(r#"<a class="step"#).count(), 5, "{rail}");
+    assert_eq!(rail.matches(r#"<a class="step"#).count(), 6, "{rail}");
     assert!(
         rail.contains(&format!(
             r#"<a class="step here" href="/setup/{setup}/directories">"#
         )),
         "{rail}"
     );
-    for (uri, page) in &walked[1..] {
+    for (uri, page) in &walked {
         assert!(!page.contains("Pairing"), "{uri}: {page}");
         assert!(!page.contains(&format!("/setup/{setup}/pairing")), "{uri}");
     }
@@ -895,9 +897,10 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         "{rail}"
     );
     for (at, next) in [
-        (1, "models\">Models"),
-        (2, "placement\">Placement"),
-        (3, "confirm\">Confirm"),
+        (0, "models\">Models"),
+        (1, "adapter\">Adapter"),
+        (5, "placement\">Placement"),
+        (2, "confirm\">Confirm"),
     ] {
         assert!(
             walked[at]
@@ -909,7 +912,7 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         );
     }
     // Confirm's way forward stands only once Confirm does.
-    assert!(!walked[4].1.contains("Next:"), "{}", walked[4].1);
+    assert!(!walked[3].1.contains("Next:"), "{}", walked[3].1);
     // The Pair page offers no way on to the declaration before its box is
     // paired: the page read under its own URI, before `paired`, selected by
     // that URI so that the list's order cannot move the read.
@@ -920,22 +923,33 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         .collect();
     assert_eq!(unpaired.len(), 1, "the unpaired Pair page is read once");
     assert!(!unpaired[0].contains("Next:"), "{pairing}: {}", unpaired[0]);
-    // The directories page names the model cache where it is set, and the key
-    // by its fingerprint, with the way to change it.
+    // The directories page names the model cache where it is set, and no
+    // SSH key: the appliance ships with SSH off and the SSH keys page is
+    // retired (the Planner's brief of 2026-11-28, part 5).
     let drives = &walked[walked.len() - 1].1;
     assert!(
         drives.contains(&cache.path().display().to_string()),
         "{drives}"
     );
-    assert!(drives.contains(
-        r#"<a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab"#
-    ));
-    // The build page links the declaration screen as built.
+    assert!(!drives.contains("/admin/ssh-key"), "{drives}");
+    assert!(!drives.contains("SSH key"), "{drives}");
+    // The build page says the console does not declare what no setup page
+    // asks yet, and that a load does not need it; it links no retired
+    // screen.
+    let build = &walked
+        .iter()
+        .find(|(uri, _)| uri.ends_with("/build"))
+        .expect("the build page is walked")
+        .1;
     assert!(
-        walked[5]
-            .1
-            .contains(r#"<a href="/declarations">the declaration screen</a>"#)
+        build.contains(
+            "The console does not declare the fields no setup page asks yet, such as the sampler's values, the elections and the prompt. A load does not need them."
+        ),
+        "{build}"
     );
+    for (uri, page) in &walked {
+        assert!(!page.contains(r#"href="/declarations"#), "{uri}: {page}");
+    }
 }
 
 /// **New agent lists each open setup not paired, with a link to its own
@@ -995,7 +1009,14 @@ async fn a_declaration_opens_once_its_box_is_paired() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
-    for p in ["directories", "models", "placement", "confirm", "build"] {
+    for p in [
+        "directories",
+        "models",
+        "adapter",
+        "placement",
+        "confirm",
+        "build",
+    ] {
         let uri = format!("/setup/{setup}/{p}");
         let (status, headers, body) = send_as(&rig.app, "GET", &uri, None, &ada).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{uri}: {body}");
@@ -1501,7 +1522,7 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
         "a models disk at least 10 GB larger than the model, and a state disk of at least 10 GiB. The 10 GB margin is guidance. No page judges it.",
         "Each mount path is preset to our default, and the operator may type another. Where a disk already holds data, the script asks whether to keep it or erase it.",
         "GB10 Spark-class devices are hardware we want to deploy to and do not have yet.",
-        "Start the appliance with its two disks attached, and connect to it over SSH as the appliance&#39;s starting user. Its first password is changed at the first login.",
+        "Start the appliance with its two disks attached, and sign in at its console as the appliance&#39;s starting user. Its first password is changed at the first login.",
         "<li>Run <code>weaver-setup</code> with root's authority.</li>",
         "The script prepares and mounts the two disks, marks each card for a plane, and asks for Weaver Web's address on the management plane.",
         "Give it this address:",
@@ -1533,10 +1554,13 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
     ] {
         assert!(!lowered.contains(never), "{never}: {body}");
     }
-    let forms = new.matches("<form ").count() - new.matches(r#"action="/sign-out""#).count();
+    // The masthead's two forms, sign-out and the theme, are every page's.
+    let forms = new.matches("<form ").count()
+        - new.matches(r#"action="/sign-out""#).count()
+        - new.matches(r#"action="/theme""#).count();
     assert_eq!(forms, 1, "one form: {new}");
     let form_at = new
-        .find(r#"<form method="post" action="/pair" class="stack">"#)
+        .find(r#"<form method="post" action="/pair#finalize" id="finalize" class="stack">"#)
         .unwrap();
     let form = &new[form_at..new[form_at..].find("</form>").unwrap() + form_at];
     for holds in [
@@ -1556,20 +1580,26 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
         for uri in others {
             let other = page(app, uri, session).await;
             assert!(
-                !other.contains(r#"action="/pair""#),
+                !other.contains(r#"action="/pair#finalize""#),
                 "{state}, {uri}: {other}"
             );
             assert!(!other.contains("Finalize the pairing"), "{state}, {uri}");
         }
     }
-    let mut others = vec!["/setup".to_owned()];
-    none_hold_it(&rig.app, &ada, &others, "no setup").await;
+    let mut others = Vec::new();
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
     others.push(format!("/pair/{setup}"));
     none_hold_it(&rig.app, &ada, &others, "begun the old way, unpaired").await;
     paired(s, &setup).await;
-    for p in ["directories", "models", "placement", "confirm", "build"] {
+    for p in [
+        "directories",
+        "models",
+        "adapter",
+        "placement",
+        "confirm",
+        "build",
+    ] {
         others.push(format!("/setup/{setup}/{p}"));
     }
     none_hold_it(&rig.app, &ada, &others, "paired").await;

@@ -647,15 +647,13 @@ async fn landed(
     landed
 }
 
-/// **`GET /` sends a browser on** (Spec 2.8, the operator's ruling of
-/// 2026-11-25 on the order of work): to sign-in with no cookie or one
-/// naming no session; with a live session to `/agents` where its person
-/// holds no admin grant and to `/pair` where they hold it. **A token's
+/// **`GET /` sends a browser on** (Spec 2.8; the operator's words of
+/// 2026-11-27): to sign-in with no cookie or one naming no session; with a
+/// live session to the Agents list, `/agents`, admin or not. **A token's
 /// sign-in lands at the same page** (the Planner's ruling of 2026-11-25).
 ///
-/// Perturbations: send every session to `/pair`, and Bea, without the
-/// grant, fails; send every session to The Record, and Ada, an admin,
-/// fails.
+/// Perturbations: send an admin's session to `/pair` again, and Ada fails;
+/// send every session to The Record, and both fail.
 #[tokio::test]
 async fn the_root_sends_a_browser_on() {
     let Some(fresh) = fresh_store().await else {
@@ -672,7 +670,7 @@ async fn the_root_sends_a_browser_on() {
     let granted = host::grant_add(s, &ada, "admin", None, None).await;
     assert!(granted.ok, "{}", granted.value);
     let bea = person(s, "bea").await;
-    for (name, id, page) in [("bea", &bea, "/agents"), ("ada", &ada, "/pair")] {
+    for (name, id, page) in [("bea", &bea, "/agents"), ("ada", &ada, "/agents")] {
         let token = token_for(s, id).await;
         let (status, headers, body) = post_token(&app, name, &token).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{name}: {body}");

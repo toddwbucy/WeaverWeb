@@ -1,12 +1,15 @@
 //! conforms: web-the-bar-stands-in-two-rows
+//! conforms: web-the-theme-is-chosen-in-the-masthead-and-drawn-by-the-server
 //! conforms: web-every-page-declares-its-tab-and-sub-tab
 //! conforms: web-a-pages-way-forward-stands-where-its-condition-holds
-//! conforms: web-the-agent-page-leads-on-to-record-and-an-admin-back-to-its-declaration
+//! conforms: web-the-agent-page-leads-on-to-record-and-links-no-retired-screen
+//! conforms: web-the-agents-list-is-the-agents-tabs-one-page
+//! conforms: web-the-retired-screens-answer-not-found
 //!
 //! The bar and the path (Spec 2.8, 2.13 and 6.1; the operator's words of
 //! 2026-11-13): the bar stands in two rows, three tabs on top (Agents,
 //! Agent Operations, IAM) with the status at the right and the page's tab's
-//! sub-tabs beneath, the agents' in the path's order with their stage marks, an admin's sub-tabs absent for
+//! sub-tabs beneath, the Agents tab's one, an admin's sub-tabs absent for
 //! a person, and every page declaring its tab and sub-tab; each page's way
 //! forward stands where its condition holds and nowhere else; and the agent
 //! page's rail links Declare and Provision for an admin alone. Each test runs on a store of its own. No
@@ -133,7 +136,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     assert_eq!(
         links(&top),
         pairs(&[
-            ("/pair", "Agents"),
+            ("/agents", "Agents"),
             ("/record", "Agent Operations"),
             ("/admin/persons", "IAM"),
             ("who", ""),
@@ -174,7 +177,7 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     assert_eq!(
         links(&top),
         pairs(&[
-            ("/pair", "Agents"),
+            ("/agents", "Agents"),
             ("/record", "Agent Operations"),
             ("/admin/persons", "IAM"),
             ("who", ""),
@@ -187,8 +190,12 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
     let (top, second) = bar(&signed_out);
     assert_eq!(
         links(&top),
-        pairs(&[("/record", "Agent Operations"), ("/sign-in", "Sign in")]),
-        "{signed_out}"
+        pairs(&[
+            ("/record", "Agent Operations"),
+            ("/sign-in", "Sign in"),
+            ("who", ""),
+        ]),
+        "the empty who takes the free width, so the theme stands at the right: {signed_out}"
     );
     assert_eq!(current(&top), ["Sign in"]);
     assert!(
@@ -198,13 +205,13 @@ async fn the_top_row_holds_three_tabs_and_the_status_at_the_right() {
 }
 
 /// **The second row holds the sub-tabs of the page's tab**, the current
-/// one marked and the row named by its tab: under Agents, New agent,
-/// Declarations, Register and Your agents in the path's order with their
-/// stage marks, New agent first as the first page of stage 1 (the
-/// operator's ruling of 2026-11-25);
-/// under Agent Operations, The Record alone, nothing being built there yet;
-/// under IAM, Persons, Grants, Hugging Face, SSH keys and Passkeys. A person who is not an admin
-/// sees the sub-tabs they may open: Your agents, The Record and Passkeys.
+/// one marked and the row named by its tab: under Agents, its one sub-tab,
+/// the Agents list, marked on every page of the tab, New agent and the
+/// declaration among them (the operator's words of 2026-11-27); under
+/// Agent Operations, The Record alone, nothing being built there yet; under
+/// IAM, Persons, Grants, Register, Hugging Face and Passkeys. A
+/// person who is not an admin sees the sub-tabs they may open: Agents, The
+/// Record and Passkeys.
 #[tokio::test]
 async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
     let Some(rig) = rig().await else {
@@ -213,28 +220,16 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, bea) = signed_in(&rig.app, s, &mut authenticator(), "bea").await;
-    let agents = pairs(&[
-        ("/pair", "1 Declare New agent"),
-        ("/setup", "1 Declare Declarations"),
-        ("/admin/agents", "2 Provision Register"),
-        ("/agents", "3 Run 4 Observe Your agents"),
-    ]);
+    let agents = pairs(&[("/agents", "Agents")]);
     let operations = pairs(&[("/record", "The Record")]);
     let iam = pairs(&[
         ("/admin/persons", "Persons"),
         ("/admin/grants", "Grants"),
+        ("/admin/agents", "Register"),
         ("/admin/hugging-face", "Hugging Face"),
-        ("/admin/ssh-key", "SSH keys"),
         ("/passkeys", "Passkeys"),
     ]);
     for (uri, session, tab, want, here) in [
-        (
-            "/declarations",
-            &ada,
-            "Agents",
-            agents.clone(),
-            "1 Declare Declarations",
-        ),
         (
             "/record",
             &ada,
@@ -243,13 +238,7 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
             "The Record",
         ),
         ("/admin/grants", &ada, "IAM", iam.clone(), "Grants"),
-        (
-            "/agents",
-            &bea,
-            "Agents",
-            vec![agents[3].clone()],
-            "3 Run 4 Observe Your agents",
-        ),
+        ("/agents", &bea, "Agents", agents.clone(), "Agents"),
         (
             "/record",
             &bea,
@@ -264,21 +253,9 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
             iam.clone(),
             "Hugging Face",
         ),
-        ("/admin/ssh-key", &ada, "IAM", iam.clone(), "SSH keys"),
-        (
-            "/setup",
-            &ada,
-            "Agents",
-            agents.clone(),
-            "1 Declare Declarations",
-        ),
-        (
-            "/pair",
-            &ada,
-            "Agents",
-            agents.clone(),
-            "1 Declare New agent",
-        ),
+        ("/agents", &ada, "Agents", agents.clone(), "Agents"),
+        ("/pair", &ada, "Agents", agents.clone(), "Agents"),
+        ("/admin/agents", &ada, "IAM", iam.clone(), "Register"),
         ("/passkeys", &bea, "IAM", vec![iam[4].clone()], "Passkeys"),
     ] {
         let page = page(&rig.app, uri, session).await;
@@ -309,8 +286,198 @@ async fn the_second_row_holds_the_sub_tabs_of_the_pages_tab() {
     assert!(
         page(&rig.app, "/agents", &bea)
             .await
-            .contains("<h1>Your agents</h1>")
+            .contains("<h1>Agents</h1>")
     );
+}
+
+/// **The Agents list is the Agents tab's one page** (Spec 2.8; the
+/// operator's words of 2026-11-27: "on the first tab we should have a list
+/// of agents and teh create new agent button that is all"). An admin's
+/// names every agent and every open setup, by name, each with one plain
+/// state word, sorted by name, and holds one button, Create new agent,
+/// which opens New agent, and nothing else. A setup's row opens its
+/// declaration: its Pair page while it waits for its appliance, its
+/// directories page once paired, confirmed or not. An agent no setup names
+/// opens its own page under a grant and its row on the register without
+/// one. **A load state is said only under a grant.** A person who is not an
+/// admin sees the agents they hold a grant on, each opening its own page,
+/// and no button. `GET /setup`, Declarations, leads to the list.
+///
+/// Perturbations: say the load state without a grant, and jane reads
+/// loaded to the admin; drop the button's admin condition, and bea's page
+/// holds it; open an admin's setup row at its agent page, and mara's row
+/// fails; leave the setups in their pairing step out, and otto is missing;
+/// list every open setup as a row of its own, paired ones too, and the
+/// count of rows fails, since a paired agent is one row; sort the retired
+/// ivan before the live one, and the order fails; drop the retired row's
+/// note, and it is missing.
+#[tokio::test]
+async fn the_agents_list_names_each_agent_by_one_word_and_opens_its_declaration() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (ada_id, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (bea_id, bea) = signed_in(&rig.app, s, &mut authenticator(), "bea").await;
+    let mut setups = std::collections::HashMap::new();
+    for name in ["otto", "karl", "lena", "mara"] {
+        let (_, _, setup) = crate::setup_tests::begin(s, &ada, name).await;
+        let setup = setup.expect("a setup opens");
+        if name != "otto" {
+            crate::setup_tests::paired(s, &setup).await;
+        }
+        setups.insert(name, setup);
+    }
+    let agent_of = async |name: &str| -> String {
+        sqlx::query_scalar("SELECT agent_id FROM agent_setup WHERE setup_id = $1")
+            .bind(&setups[name])
+            .fetch_one(&s.pool)
+            .await
+            .unwrap()
+    };
+    let mara = agent_of("mara").await;
+    sqlx::query("UPDATE agent_setup SET turn_context = 'continuous' WHERE setup_id = $1")
+        .bind(&setups["lena"])
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agent_setup SET state = 'confirmed' WHERE setup_id = $1")
+        .bind(&setups["mara"])
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    let (jane, _) = rig.register(&ada, "box-c", "jane").await;
+    let (ivan, _) = rig.register(&ada, "box-d", "ivan").await;
+    let (status, _, answer) = send_as(
+        &rig.app,
+        "POST",
+        "/admin/agents/retire",
+        Some(form(&[("agent", &ivan)])),
+        &ada,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{answer}");
+    // **A name retired and registered again** is two rows of one box and
+    // name: the live row first, the retired one saying so and naming its
+    // identity beside its label.
+    let (ivan_again, _) = rig.register(&ada, "box-d", "ivan").await;
+    assert_ne!(ivan_again, ivan);
+    for agent in [&jane, &mara] {
+        sqlx::query(
+            "UPDATE agent SET load_state = 'loaded', load_state_at = now() WHERE agent_id = $1",
+        )
+        .bind(agent)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+    }
+    for (person, agent) in [(&ada_id, &mara), (&bea_id, &mara)] {
+        let granted = host::grant_add(s, person, "observer", Some(agent), None).await;
+        assert!(granted.ok, "{}", granted.value);
+    }
+
+    let row = |href: &str, label: &str, state: &str| {
+        format!("<td><a href=\"{href}\">{label}</a></td>\n      <td>{state}</td>")
+    };
+    let retired = format!(
+        "<td><a href=\"/admin/agents\">box-d/ivan</a> <span class=\"mono\">retired, {ivan}</span></td>\n      <td>retired</td>"
+    );
+    let in_order = |page: &str, rows: &[String]| {
+        let mut from = 0;
+        for want in rows {
+            let at = page[from..]
+                .find(want.as_str())
+                .unwrap_or_else(|| panic!("{want} after {from}: {page}"));
+            from += at + want.len();
+        }
+    };
+    let main = |page: &str| page[page.find("<main").unwrap()..].to_owned();
+
+    let list = page(&rig.app, "/agents", &ada).await;
+    crate::surfaces::assert_framed(&list);
+    in_order(
+        &list,
+        &[
+            row("/admin/agents", "box-d/ivan", "registered"),
+            retired.clone(),
+            row("/admin/agents", "box-c/jane", "registered"),
+            row(
+                &format!("/setup/{}/directories", setups["karl"]),
+                "box-karl/karl",
+                "paired",
+            ),
+            row(
+                &format!("/setup/{}/directories", setups["lena"]),
+                "box-lena/lena",
+                "declaring",
+            ),
+            row(
+                &format!("/setup/{}/directories", setups["mara"]),
+                "box-mara/mara",
+                "loaded",
+            ),
+            row(
+                &format!("/pair/{}", setups["otto"]),
+                "otto",
+                "waiting for its appliance",
+            ),
+        ],
+    );
+    let body = main(&list);
+    assert_eq!(
+        body.matches("<tr>").count(),
+        8,
+        "seven rows and the head: {body}"
+    );
+    assert_eq!(
+        body.matches(r#"<section class="pane">"#).count(),
+        1,
+        "{body}"
+    );
+    assert_eq!(body.matches("<form").count(), 1, "one button: {body}");
+    assert!(
+        body.contains(r#"<form method="get" action="/pair"><button type="submit">Create new agent</button></form>"#),
+        "{body}"
+    );
+
+    // Without a grant mara's word comes from its setup, confirmed; with
+    // one on jane, jane's row opens its page and says its load state.
+    let revoked = host::grant_remove(s, &ada_id, "observer", Some(&mara), None).await;
+    assert!(revoked.ok, "{}", revoked.value);
+    let granted = host::grant_add(s, &ada_id, "observer", Some(&jane), None).await;
+    assert!(granted.ok, "{}", granted.value);
+    let list = page(&rig.app, "/agents", &ada).await;
+    in_order(
+        &list,
+        &[
+            row(&format!("/agents/{jane}"), "box-c/jane", "loaded"),
+            row(
+                &format!("/setup/{}/directories", setups["mara"]),
+                "box-mara/mara",
+                "confirmed",
+            ),
+        ],
+    );
+
+    // A person without the admin grant: the agents they hold a grant on,
+    // each opening its own page, and no button.
+    let list = page(&rig.app, "/agents", &bea).await;
+    let body = main(&list);
+    assert!(
+        body.contains(&row(&format!("/agents/{mara}"), "box-mara/mara", "loaded")),
+        "{body}"
+    );
+    assert_eq!(
+        body.matches("<tr>").count(),
+        2,
+        "one row and the head: {body}"
+    );
+    assert!(!body.contains("<form"), "{body}");
+    assert!(!body.contains("Create new agent"), "{body}");
+
+    let (status, headers, _) = send_as(&rig.app, "GET", "/setup", None, &ada).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(headers[axum::http::header::LOCATION], "/agents");
 }
 
 /// **Every page declares its tab and sub-tab**: each page an admin opens
@@ -324,7 +491,6 @@ async fn every_page_declares_its_tab_and_sub_tab() {
     };
     let s = rig.store();
     let (ada_id, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
-    let de = save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
     let (status, _, handover) = send_as(
         &rig.app,
         "POST",
@@ -346,9 +512,6 @@ async fn every_page_declares_its_tab_and_sub_tab() {
 
     let mut pages = Vec::new();
     for uri in [
-        "/declarations",
-        "/declarations/new",
-        &format!("/declarations/{de}"),
         "/admin/agents",
         "/agents",
         &format!("/agents/{karl}"),
@@ -356,12 +519,11 @@ async fn every_page_declares_its_tab_and_sub_tab() {
         "/admin/persons",
         "/admin/grants",
         "/admin/hugging-face",
-        "/admin/ssh-key",
         "/passkeys",
-        "/setup",
         "/pair",
         &format!("/pair/{setup}"),
         &format!("/setup/{setup}/models"),
+        &format!("/setup/{setup}/adapter"),
         &format!("/setup/{setup}/directories"),
         &format!("/setup/{setup}/placement"),
         &format!("/setup/{setup}/confirm"),
@@ -369,29 +531,25 @@ async fn every_page_declares_its_tab_and_sub_tab() {
     ] {
         pages.push((uri.to_owned(), page(&rig.app, uri, &ada).await));
     }
-    pages.insert(4, ("the hand-over".to_owned(), handover));
+    pages.insert(1, ("the hand-over".to_owned(), handover));
     let want = [
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("2 Provision Register")),
-        ("Agents", Some("2 Provision Register")),
-        ("Agents", Some("3 Run 4 Observe Your agents")),
-        ("Agents", Some("3 Run 4 Observe Your agents")),
+        ("IAM", Some("Register")),
+        ("IAM", Some("Register")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
         ("Agent Operations", Some("The Record")),
         ("IAM", Some("Persons")),
         ("IAM", Some("Grants")),
         ("IAM", Some("Hugging Face")),
-        ("IAM", Some("SSH keys")),
         ("IAM", Some("Passkeys")),
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare New agent")),
-        ("Agents", Some("1 Declare New agent")),
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare Declarations")),
-        ("Agents", Some("1 Declare Declarations")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
+        ("Agents", Some("Agents")),
     ];
     assert_eq!(pages.len(), want.len());
     for ((uri, page), (tab, sub)) in pages.iter().zip(want) {
@@ -419,7 +577,8 @@ async fn every_page_declares_its_tab_and_sub_tab() {
             let here = &rest[..rest.find('"').unwrap()];
             seen += 1;
             assert!(
-                !crate::surfaces::tab_of(here).is_empty() || ["sign-in", "enroll"].contains(&here),
+                !crate::surfaces::tab_of(here).is_empty()
+                    || ["sign-in", "enroll", "refused"].contains(&here),
                 "{}: the page `{here}` names no tab",
                 path.display()
             );
@@ -428,31 +587,15 @@ async fn every_page_declares_its_tab_and_sub_tab() {
     assert!(seen >= 16, "the scan read the surfaces' pages ({seen})");
 }
 
-/// **A saved declaration leads on to registering its name**, and the
-/// register's form fills a name of the register's grammar alone. The empty
-/// screen leads nowhere, having no name.
+/// **The register's form fills a name of the register's grammar alone**,
+/// from its `name` query, and leaves the field empty otherwise.
 #[tokio::test]
-async fn a_saved_declaration_leads_on_to_registering_its_name() {
+async fn the_registers_form_fills_a_name_of_its_grammar_alone() {
     let Some(rig) = rig().await else {
         return;
     };
     let s = rig.store();
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
-    let de = save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
-
-    let (status, _, page) =
-        send_as(&rig.app, "GET", &format!("/declarations/{de}"), None, &ada).await;
-    assert_eq!(status, StatusCode::OK, "{page}");
-    let next = &page[page.find(r#"<p class="next">"#).expect("a way forward")..];
-    let next = &next[..next.find("</p>").unwrap()];
-    assert!(
-        next.contains(r#"href="/admin/agents?name=karl""#)
-            && text(next).contains("2 Provision")
-            && text(next).contains("register an agent named karl"),
-        "{next}"
-    );
-    let (_, _, empty) = send_as(&rig.app, "GET", "/declarations/new", None, &ada).await;
-    assert!(!empty.contains(r#"class="next""#), "{empty}");
 
     for (uri, filled) in [
         ("/admin/agents?name=karl", "karl"),
@@ -468,6 +611,34 @@ async fn a_saved_declaration_leads_on_to_registering_its_name() {
             )),
             "{uri}: the name field holds {filled:?}: {page}"
         );
+    }
+}
+
+/// **The retired screens answer not found** (the Planner's brief of
+/// 2026-11-28, part 5): the declaration screen's bare routes and the SSH
+/// keys page's, to an admin, each 404 as any path no surface serves. Each
+/// is a request the retired route answered otherwise (a page, a redirect
+/// or a refusal), so each case can fail.
+///
+/// Perturbation: serve `/declarations` again, or `/admin/ssh-key`, and its
+/// case answers.
+#[tokio::test]
+async fn the_retired_screens_answer_not_found() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    for (method, uri) in [
+        ("GET", "/declarations"),
+        ("GET", "/declarations/new"),
+        ("POST", "/declarations"),
+        ("GET", "/admin/ssh-key"),
+        ("POST", "/admin/ssh-key"),
+    ] {
+        let body = (method == "POST").then(|| form(&[("line", "x")]));
+        let (status, _, page) = send_as(&rig.app, method, uri, body, &ada).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}: {page}");
     }
 }
 
@@ -554,14 +725,15 @@ fn paragraph(page: &str, class: &str) -> Option<String> {
     Some(p[..p.find("</p>").unwrap()].to_owned())
 }
 
-/// **The agent page leads on to The Record and, for an admin, back to its
-/// declaration**: The Record for every reader, saying it is the whole record
-/// and not this agent's; for an admin, the declaration saved under the
-/// agent's name, its head, or a new one where none is saved, and the
-/// rail's Declare and Provision as links. A person who is not an admin
-/// sees neither the way back nor a linked mark.
+/// **The agent page leads on to The Record, and links no retired screen**:
+/// The Record for every reader, saying it is the whole record and not this
+/// agent's; for an admin, the rail's Provision as a link. No screen writes
+/// a declaration now (the Planner's brief of 2026-11-28, part 5), so no way
+/// back to one stands and the rail's Declare is never a link, whether a
+/// declaration is saved under the name or not. A person who is not an
+/// admin sees no linked mark.
 #[tokio::test]
-async fn the_agent_page_leads_on_to_record_and_back_to_its_declaration() {
+async fn the_agent_page_leads_on_to_record_and_links_no_retired_screen() {
     let Some(rig) = rig().await else {
         return;
     };
@@ -594,51 +766,168 @@ async fn the_agent_page_leads_on_to_record_and_back_to_its_declaration() {
     assert!(rail_links(&page).is_empty(), "{page}");
     assert_eq!(rail(&page).len(), 8, "{page}");
 
-    let page = page_of(&ada).await;
-    assert!(paragraph(&page, "next").is_some(), "{page}");
-    let back = paragraph(&page, "back").expect("the way back");
-    assert!(
-        back.contains(r#"href="/declarations/new""#)
-            && text(&back).contains("no declaration is saved under the name karl"),
-        "{back}"
-    );
-    assert_eq!(
-        rail_links(&page),
-        [
-            ("1 Declare".to_owned(), "/declarations/new".to_owned()),
-            ("2 Provision".to_owned(), "/admin/agents".to_owned()),
-        ],
-        "{page}"
-    );
-    assert_eq!(rail(&page).len(), 8, "every stage, linked or not: {page}");
+    let admins = async || {
+        let page = page_of(&ada).await;
+        assert!(paragraph(&page, "next").is_some(), "{page}");
+        assert!(paragraph(&page, "back").is_none(), "{page}");
+        assert_eq!(
+            rail_links(&page),
+            [("2 Provision".to_owned(), "/admin/agents".to_owned())],
+            "{page}"
+        );
+        assert_eq!(rail(&page).len(), 8, "every stage, linked or not: {page}");
+        assert!(!page.contains("/declarations"), "{page}");
+        page
+    };
+    admins().await;
 
-    // Two versions of karl's lineage and another lineage: the head of
-    // karl's is the one named.
-    let first = save(&rig.app, &ada, "/declarations", posted(&[], &[])).await;
-    let second = save(
-        &rig.app,
+    // Two versions of karl's lineage and another lineage: the pane names
+    // the head, and still nothing links a retired screen.
+    let first = save(rig.store(), &ada, None, posted(&[], &[])).await;
+    save(
+        rig.store(),
         &ada,
-        &format!("/declarations/{first}"),
+        Some(&first),
         posted(&[("sampler.seed", "7")], &[]),
     )
     .await;
-    let _other = save(
+    save(rig.store(), &ada, None, posted(&[("name", "jane")], &[])).await;
+    let page = admins().await;
+    assert!(
+        page.contains("The declaration saved under the name karl: version 2"),
+        "{page}"
+    );
+}
+
+/// A theme post with the headers htmx sends, or without them.
+async fn post_theme(app: &axum::Router, theme: &str, htmx: bool) -> axum::response::Response {
+    use tower::ServiceExt;
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/theme")
+        .header(axum::http::header::ORIGIN, crate::passkeys_tests::ORIGIN)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        );
+    if htmx {
+        request = request.header("HX-Request", "true");
+    }
+    app.clone()
+        .oneshot(
+            request
+                .body(axum::body::Body::from(form(&[("theme", theme)])))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// **The theme is chosen in the masthead and drawn by the server** (Spec
+/// 2.8; the Planner's brief of 2026-11-28, part 6): every page carries the
+/// drop-down at the masthead's right, with or without a session; a post
+/// keeps one of the six in the browser's cookie, or clears it for auto,
+/// answering htmx with a reload and the form alone with a redirect, and
+/// refusing any other value; and a page leaves the server with `data-theme`
+/// on its root and the choice selected, auto setting no attribute.
+///
+/// Perturbation: drop the layer's call from `script_policy`, and a page
+/// with the cookie leaves with no theme; keep any value posted, and the
+/// odd one is kept; drop the drop-down from the page without a session,
+/// and the sign-in page has none.
+#[tokio::test]
+async fn the_theme_is_chosen_in_the_masthead_and_drawn_by_the_server() {
+    let Some(rig) = rig().await else {
+        return;
+    };
+    let s = rig.store();
+    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+
+    let answer = post_theme(&rig.app, "graphite", true).await;
+    assert_eq!(answer.status(), StatusCode::NO_CONTENT);
+    assert_eq!(answer.headers()["hx-refresh"], "true");
+    let cookie = answer.headers()[axum::http::header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        cookie,
+        "__Host-weaver_theme=graphite; Secure; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000"
+    );
+    let answer = post_theme(&rig.app, "auto", false).await;
+    assert_eq!(answer.status(), StatusCode::SEE_OTHER);
+    assert_eq!(answer.headers()[axum::http::header::LOCATION], "/");
+    assert!(
+        answer.headers()[axum::http::header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .ends_with("Max-Age=0")
+    );
+    for odd in ["Graphite", "solarized", "", "slate; Path=/x"] {
+        let answer = post_theme(&rig.app, odd, true).await;
+        assert_eq!(answer.status(), StatusCode::BAD_REQUEST, "{odd}");
+        assert!(
+            !answer
+                .headers()
+                .contains_key(axum::http::header::SET_COOKIE),
+            "{odd}"
+        );
+    }
+
+    let karl = format!("{ada}; __Host-weaver_theme=umber");
+    for uri in ["/agents", "/record", "/admin/persons", "/pair"] {
+        let (status, headers, page) = send_as(&rig.app, "GET", uri, None, &karl).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {page}");
+        assert!(
+            page.contains(r#"<html lang="en" data-theme="umber">"#),
+            "{uri}: {page}"
+        );
+        assert!(
+            page.contains(r#"<option value="umber" selected>Umber</option>"#),
+            "{uri}: {page}"
+        );
+        for other in ["auto", "slate", "graphite", "chalk", "mist", "paper"] {
+            assert!(
+                !page.contains(&format!(r#"<option value="{other}" selected>"#)),
+                "{uri}: {other}"
+            );
+        }
+        assert_eq!(headers["content-security-policy"], "script-src 'self'");
+    }
+    let (_, _, page) = send_as(&rig.app, "GET", "/agents", None, &ada).await;
+    assert!(
+        page.contains(r#"<html lang="en">"#) && !page.contains("data-theme"),
+        "{page}"
+    );
+    assert!(
+        page.contains(r#"<option value="auto" selected>Auto</option>"#),
+        "{page}"
+    );
+    let masthead = &page[page.find(r#"<nav class="masthead">"#).unwrap()..];
+    let masthead = &masthead[..masthead.find("</nav>").unwrap()];
+    assert!(
+        masthead.find("Sign out").unwrap() < masthead.find(r#"<select name="theme""#).unwrap(),
+        "the theme stands at the right, after sign-out: {masthead}"
+    );
+
+    let (status, _, page) = send_as(
         &rig.app,
-        &ada,
-        "/declarations",
-        posted(&[("name", "jane")], &[]),
+        "GET",
+        "/sign-in",
+        None,
+        "none; __Host-weaver_theme=paper",
     )
     .await;
-    let page = page_of(&ada).await;
-    let back = paragraph(&page, "back").expect("the way back");
+    assert_eq!(status, StatusCode::OK, "{page}");
     assert!(
-        back.contains(&format!(r#"href="/declarations/{second}""#))
-            && text(&back).contains("the declaration saved under the name karl, version 2"),
-        "{back}"
+        page.contains(r#"<html lang="en" data-theme="paper">"#)
+            && page.contains(r#"<option value="paper" selected>Paper</option>"#),
+        "a page without a session carries the choice: {page}"
     );
-    assert_eq!(
-        rail_links(&page)[0],
-        ("1 Declare".to_owned(), format!("/declarations/{second}")),
-        "{page}"
+    // A fragment carries neither the root nor the drop-down.
+    let (_, _, fragment) = send_as(&rig.app, "GET", "/availability", None, &karl).await;
+    assert!(
+        !fragment.contains("<html") && !fragment.contains("data-theme"),
+        "{fragment}"
     );
 }

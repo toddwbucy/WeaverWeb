@@ -7,6 +7,7 @@
 //! conforms: web-new-agent-holds-what-an-agent-needs-the-steps-at-the-appliance-and-one-form-with-no-click-before-them
 //! conforms: web-new-agent-gives-weaver-webs-management-address-and-never-the-data-doors-and-says-so-where-one-door-serves-both-planes
 //! conforms: web-new-agent-lists-each-open-setup-not-paired-with-a-link-to-its-own-pair-page
+//! conforms: web-the-retired-screens-answer-not-found
 //!
 //! **New agent, and Declare's path** (Spec 6.2, 8.2), an admin's, the
 //! server-wide admin grant. **New agent is the first page of stage 1**
@@ -20,8 +21,8 @@
 //! is that agent's Pair page, which shows the pairing stage's report and
 //! leads on to the declaration, and `POST /pair/{setup}` keeps its
 //! checkbox. A setup begun before New agent named agents in one form keeps
-//! its Pair page as built, its code field among it. **The declaration is Declare's**: `GET /setup` lists the
-//! paired agents whose declaration is open, and `GET /setup/{setup}/{page}`
+//! its Pair page as built, its code field among it. **The declaration is Declare's**: the Agents list
+//! (`GET /agents`) opens it, `GET /setup` leads there, and `GET /setup/{setup}/{page}`
 //! draws one page of the setup. The models page and its fragments are the child
 //! module `models` (`setup/models.rs`), the placement page and its post
 //! `placement` (`setup/placement.rs`), and the confirm page and Confirm
@@ -46,7 +47,7 @@ use askama::Template;
 use axum::Router;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use serde::Deserialize;
 
@@ -117,19 +118,25 @@ pub(crate) const FIRST_PASSWORD: &str = "Its first password";
 /// page of the setup: it is New agent's, before the declaration.
 /// **The declaration starts at directories** (the operator's ruling of
 /// 2026-11-23: "The declaration starts at directories, not drives").
+/// **The adapter's step comes right after the model's** (the operator's
+/// words of 2026-11-27, the Planner's brief of 2026-11-28, part 4): the
+/// decoder is picked on Models, and its pick lands on Adapter, which picks
+/// an adapter from a repository or goes on with none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Directories,
     Models,
+    Adapter,
     Placement,
     Confirm,
     Build,
 }
 
 impl Page {
-    const ALL: [Page; 5] = [
+    const ALL: [Page; 6] = [
         Page::Directories,
         Page::Models,
+        Page::Adapter,
         Page::Placement,
         Page::Confirm,
         Page::Build,
@@ -138,6 +145,7 @@ impl Page {
     fn slug(self) -> &'static str {
         match self {
             Page::Models => "models",
+            Page::Adapter => "adapter",
             Page::Directories => "directories",
             Page::Placement => "placement",
             Page::Confirm => "confirm",
@@ -148,6 +156,7 @@ impl Page {
     fn title(self) -> &'static str {
         match self {
             Page::Models => "Models",
+            Page::Adapter => "Adapter",
             Page::Directories => "Directories",
             Page::Placement => "Placement",
             Page::Confirm => "Confirm",
@@ -168,18 +177,14 @@ pub fn routes(seams: Seams) -> Router<Store> {
             )
         }};
     }
-    let start_seams = seams.clone();
     let first_seams = seams.clone();
     let pair_seams = seams.clone();
     let pairing_seams = seams.clone();
     let mut router = Router::new()
-        .route(
-            "/setup",
-            get(move |State(store): State<Store>, headers: HeaderMap| {
-                let seams = start_seams.clone();
-                async move { start(store, &seams, headers).await }
-            }),
-        )
+        // **Declarations, the start page, is folded into the Agents list**
+        // (Spec 2.8; the operator's words of 2026-11-27), which names every
+        // setup; its address leads there.
+        .route("/setup", get(|| async { Redirect::to("/agents") }))
         .route(
             "/pair",
             get(move |State(store): State<Store>, headers: HeaderMap| {
@@ -221,7 +226,6 @@ pub fn routes(seams: Seams) -> Router<Store> {
         .merge(models::routes(&seams))
         .merge(placement::routes(&seams))
         .merge(confirm::routes(&seams))
-        .merge(crate::surfaces::ssh_key::routes(seams.policy.clone()))
 }
 
 fn when(at: chrono::DateTime<chrono::Utc>) -> String {
@@ -389,24 +393,6 @@ fn declaration_state(setup: &Setup) -> Result<(), Refusal> {
     }
 }
 
-struct OpenView {
-    name: String,
-    begun_by: String,
-    begun_at: String,
-    href: String,
-}
-
-impl OpenView {
-    fn of(setup: Setup, href: String) -> Self {
-        OpenView {
-            href,
-            name: setup.name,
-            begun_by: setup.begun_by,
-            begun_at: when(setup.begun_at),
-        }
-    }
-}
-
 /// The page of a pairing: New agent's page for `setup_id`.
 fn pair_href(setup_id: &str) -> String {
     format!("/pair/{setup_id}")
@@ -420,66 +406,14 @@ fn declare_next(setup_id: &str) -> Next {
     }
 }
 
-/// The open setups, the admin's session and the chrome, for the start
-/// page, or the answer.
-async fn open_read(
-    store: &Store,
-    seams: &Seams,
-    headers: &HeaderMap,
-) -> Result<(Session, super::Chrome, Vec<Setup>), Response> {
-    let session = match admin_session(store, &seams.policy, headers).await {
-        Ok(Ok(session)) => session,
-        Ok(Err(_)) => return Err((StatusCode::FORBIDDEN, NOT_AN_ADMIN).into_response()),
-        Err(answer) => return Err(answer),
-    };
-    match async {
-        Ok::<_, anyhow::Error>((
-            super::Chrome::of(store, &session.person_id).await?,
-            store.open_setups().await?,
-        ))
-    }
-    .await
-    {
-        Ok((chrome, open)) => Ok((session, chrome, open)),
-        Err(e) => Err(fault(e)),
-    }
-}
-
-#[derive(Template)]
-#[template(path = "setup_start.html")]
-struct StartPage {
-    here: &'static str,
-    who: String,
-    admin: bool,
-    chrome: super::Chrome,
-    open: Vec<OpenView>,
-}
-
-/// **The start page, Declarations**: the paired agents whose declaration is
-/// open, each a link to the declaration's first page. An agent is named
-/// where its box is paired, on New agent.
-async fn start(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
-    let (session, chrome, open) = match open_read(&store, seams, &headers).await {
-        Ok(read) => read,
-        Err(answer) => return answer,
-    };
-    let page = StartPage {
-        here: "declarations",
-        who: session.name.clone(),
-        admin: true,
-        chrome,
-        open: open
-            .into_iter()
-            .filter(|s| s.paired.is_some())
-            .map(|s| {
-                let href = declare_next(&s.setup_id).href;
-                OpenView::of(s, href)
-            })
-            .collect(),
-    };
-    match page.render() {
-        Ok(html) => Html(html).into_response(),
-        Err(e) => fault(e),
+/// **The way into a setup's declaration**, as the Agents list links it
+/// (Spec 2.8): its Pair page while it waits for its appliance, and the
+/// declaration's first page once paired.
+pub(crate) fn declaration_href(setup: &Setup) -> String {
+    if setup.in_pairing_step() {
+        pair_href(&setup.setup_id)
+    } else {
+        declare_next(&setup.setup_id).href
     }
 }
 
@@ -856,7 +790,6 @@ struct DirectoriesPage {
     admin: bool,
     chrome: super::Chrome,
     frame: Frame,
-    keys: Vec<crate::surfaces::ssh_key::KeyView>,
     /// The console's `model_cache`, where set.
     model_cache: Option<String>,
     /// The directories as mounted, from the report, judged (Spec 6.2).
@@ -956,9 +889,8 @@ async fn page(
     let who = session.name.clone();
     let rendered = match at {
         Page::Directories => {
-            let (keys, need, reports) = match async {
+            let (need, reports) = match async {
                 Ok::<_, anyhow::Error>((
-                    crate::surfaces::ssh_key::held(&store).await?,
                     need(&store, setup_id).await?,
                     store.reports(seams.boxes.as_ref(), setup_id).await?,
                 ))
@@ -975,7 +907,6 @@ async fn page(
                 admin: true,
                 chrome,
                 frame,
-                keys,
                 model_cache: seams
                     .cfg
                     .model_cache
@@ -994,7 +925,7 @@ async fn page(
         }
         .render(),
         // Each is its child module's, never routed here.
-        Page::Models | Page::Placement | Page::Confirm => {
+        Page::Models | Page::Adapter | Page::Placement | Page::Confirm => {
             return StatusCode::NOT_FOUND.into_response();
         }
     };

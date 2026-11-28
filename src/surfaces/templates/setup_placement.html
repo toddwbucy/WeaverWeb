@@ -34,8 +34,8 @@
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>The turn context</h2><span class="backing built">built</span><span class="status ok">ok</span><span class="source">the setup</span></header>
   <div class="body">
-  {%- for word in turn_contexts %}
-  <label><input type="radio" name="turn_context" value="{{ word }}" required{% if turn == *word %} checked{% endif %}> {{ word }}</label>
+  {%- for (word, meaning) in turn_contexts %}
+  <label><input type="radio" name="turn_context" value="{{ word }}" required{% if turn == *word %} checked{% endif %}> {{ word }}: {{ meaning }}</label>
   {%- endfor %}
   </div>
   <footer>{% if turn.is_empty() %}None is kept. {% endif %}The agent reads its absence as continuous, so the page never leaves the election to that default.</footer>

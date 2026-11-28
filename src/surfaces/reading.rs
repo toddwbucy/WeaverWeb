@@ -1,5 +1,6 @@
 //! conforms: web-reading-an-agent-takes-a-grant-on-it
-//! conforms: web-the-agent-page-leads-on-to-record-and-an-admin-back-to-its-declaration
+//! conforms: web-the-agent-page-leads-on-to-record-and-links-no-retired-screen
+//! conforms: web-the-agents-list-is-the-agents-tabs-one-page
 //!
 //! **Reading an agent** (design sections 6 and 9; Spec 2.12 and 2.13; act
 //! 11, PR 6a): the agents a person holds a grant on, one agent's register
@@ -9,7 +10,8 @@
 //! **A person without a grant on an agent sees nothing of it**: it is
 //! absent from their list, and its page and its live view answer exactly as
 //! an agent that does not exist, so neither is an oracle for agent
-//! identities. The identity is parsed to its shape first. The check is the
+//! identities. An admin's list names every agent, as the register does,
+//! and says a load state only under a grant (the Agents list, Spec 2.8). The identity is parsed to its shape first. The check is the
 //! store's (`Store::roles_on`), at every read, under the identity exclusion
 //! held shared for the check alone. No read is audited.
 //!
@@ -112,41 +114,6 @@ fn stages(links: &[(u8, String)]) -> Vec<StageView> {
                 .map(|(_, href)| href.clone()),
         })
         .collect()
-}
-
-/// **The way back to the agent's declaration**, an admin's alone, since
-/// the declaration screen is (Spec 2.13, 6.1): the declaration saved under
-/// the agent's name, or a new one where none is.
-pub(crate) struct DeclaredLink {
-    pub(crate) href: String,
-    pub(crate) words: String,
-}
-
-impl DeclaredLink {
-    /// The way back for what the head lookup read: the head, a new
-    /// declaration where none is saved, or the declarations where the
-    /// lookup failed, since "declare one" would state what was not read.
-    pub(crate) fn of(name: &str, head: Head<'_>) -> DeclaredLink {
-        match head {
-            Head::Unread => DeclaredLink {
-                href: "/declarations".to_owned(),
-                words: format!(
-                    "whether a declaration is saved under the name {name} could not be read just now: the declarations"
-                ),
-            },
-            Head::Saved(saved) => DeclaredLink {
-                href: format!("/declarations/{}", saved.de),
-                words: format!(
-                    "the declaration saved under the name {name}, version {}",
-                    saved.version
-                ),
-            },
-            Head::NoneSaved => DeclaredLink {
-                href: "/declarations/new".to_owned(),
-                words: format!("no declaration is saved under the name {name}: declare one"),
-            },
-        }
-    }
 }
 
 /// What is left, said at the rail's end: the current stage of the eight
@@ -340,16 +307,62 @@ async fn readable(
     Ok((session, id, roles))
 }
 
+/// **One row of the Agents list** (Spec 2.8): an agent or an open setup,
+/// by name, with one plain word for where it stands and the way to it.
 struct ListRow {
-    agent_id: String,
     label: String,
-    /// The gate plane, said: connected, not connected or not enrolled.
-    gate: &'static str,
-    admin: bool,
-    /// Its open alerts.
+    /// **Beside a retired agent's label, that it is retired and its
+    /// identity**, since a name retired and registered again is two rows of
+    /// the same box and name, and this tells them apart.
+    note: Option<String>,
+    href: String,
+    state: String,
+    /// Its open alerts, on an agent the person holds a grant on.
     alerts: i64,
-    /// The transition standing, said; empty where none stands.
-    transition: String,
+}
+
+/// **One plain word for where an agent stands** (Spec 2.8; the operator's
+/// words of 2026-11-27: "on the first tab we should have a list of agents
+/// and teh create new agent button that is all"), from its register row,
+/// its setup with whether any of the declaration is kept, and whether the
+/// person holds a grant on it. **A load state or a transition is said only
+/// under a grant** (Spec 2.13): without one the word comes from the
+/// register and the setup alone, as the register page shows no agent's
+/// state. In order: retired; in transition; the load state where it is
+/// not `unloaded`; the setup's step (waiting for its appliance, paired,
+/// declaring, confirmed); `unloaded`; registered.
+pub(crate) fn state_word(
+    agent: Option<&Agent>,
+    setup: Option<(&crate::store::setup::Setup, bool)>,
+    granted: bool,
+) -> String {
+    let load = agent
+        .filter(|_| granted)
+        .and_then(|a| a.load_state.as_deref());
+    if let Some(a) = agent {
+        if a.gate.state != CredentialState::Live && a.admin.state != CredentialState::Live {
+            return "retired".to_owned();
+        }
+        if granted && a.in_transition_at.is_some() {
+            return "in transition".to_owned();
+        }
+    }
+    if let Some(state) = load.filter(|s| *s != "unloaded") {
+        return state.replace('_', " ");
+    }
+    if let Some((setup, declared)) = setup {
+        return if setup.in_pairing_step() {
+            "waiting for its appliance"
+        } else if setup.state == "confirmed" {
+            "confirmed"
+        } else if declared {
+            "declaring"
+        } else {
+            "paired"
+        }
+        .to_owned();
+    }
+    load.map_or_else(|| "registered".to_owned(), |s| s.replace('_', " "))
 }
 
 /// **A transition standing, as the pages say it** (Spec 2.12): with no
@@ -387,52 +400,103 @@ struct ListPage {
     rows: Vec<ListRow>,
 }
 
-/// **The agents the person holds a grant on**, and no other: a person with
-/// none sees an empty list, never an error that reveals there are agents.
+/// **The Agents list** (Spec 2.8; the operator's words of 2026-11-27), the
+/// Agents tab's one page: every agent and every open setup for an admin,
+/// each by name with one plain state word, and one button, Create new
+/// agent, which opens New agent. An admin's row opens the agent's
+/// declaration: its Pair page while the setup waits for its appliance,
+/// its directories page once paired, and where no setup names the agent,
+/// its own page under a grant or else its row on the register. **A person
+/// who is not an admin sees the agents they hold a grant on, and no
+/// other**, each opening its own page, and no button: a person with none
+/// sees an empty list, never an error that reveals there are agents.
 async fn list(store: Store, seams: &Seams, headers: HeaderMap) -> Response {
     let session = match session_of(&store, &seams.policy, &headers).await {
         Ok(session) => session,
         Err(answer) => return answer,
     };
-    let (agents, admin) = match (
-        store.readable_agents(&session.person_id).await,
-        store.is_admin(&session.person_id).await,
-    ) {
-        (Ok(agents), Ok(admin)) => (agents, admin),
-        (Err(e), _) | (_, Err(e)) => return fault(e),
+    let read = async {
+        let readable = store.readable_agents(&session.person_id).await?;
+        let admin = store.is_admin(&session.person_id).await?;
+        let agents = if admin {
+            store.agents().await?
+        } else {
+            readable.clone()
+        };
+        Ok::<_, anyhow::Error>((
+            readable,
+            admin,
+            agents,
+            store.listed_setups().await?,
+            store.open_alerts_by_agent(&session.person_id).await?,
+            super::Chrome::of(&store, &session.person_id).await?,
+        ))
     };
-    let open = match store.open_alerts_by_agent(&session.person_id).await {
-        Ok(open) => open,
+    let (readable, admin, agents, setups, open, chrome) = match read.await {
+        Ok(read) => read,
         Err(e) => return fault(e),
     };
     let open_on = |agent: &str| open.iter().find(|(a, _)| a == agent).map_or(0, |(_, n)| *n);
-    let rows = agents
-        .into_iter()
-        .map(|a| ListRow {
-            agent_id: a.agent_id.as_str().to_owned(),
-            label: format!("{}/{}", a.r#box, a.name),
-            gate: if a.gate.state == CredentialState::None {
-                "not enrolled"
-            } else if a.gate.connected {
-                "connected"
-            } else {
-                "not connected"
-            },
-            admin: a.admin.connected,
-            alerts: open_on(a.agent_id.as_str()),
-            transition: transition_said(&a),
+    // The latest setup its pairing linked to each agent.
+    let mut setup_of = std::collections::HashMap::new();
+    for (setup, declared) in &setups {
+        if let Some((agent_id, _)) = &setup.paired {
+            setup_of.insert(agent_id.clone(), (setup, *declared));
+        }
+    }
+    // Sorted by name and box, the live row before a retired one of the same
+    // box and name, and then by identity, so the order is fixed.
+    let mut rows: Vec<((String, String, bool, String), ListRow)> = agents
+        .iter()
+        .map(|a| {
+            let id = a.agent_id.as_str();
+            let retired =
+                a.gate.state != CredentialState::Live && a.admin.state != CredentialState::Live;
+            let granted = readable.iter().any(|r| r.agent_id == a.agent_id);
+            let setup = setup_of.get(id).copied();
+            let href = match setup {
+                Some((s, _)) if admin => super::setup::declaration_href(s),
+                _ if granted => format!("/agents/{id}"),
+                _ => "/admin/agents".to_owned(),
+            };
+            (
+                (a.name.clone(), a.r#box.clone(), retired, id.to_owned()),
+                ListRow {
+                    label: format!("{}/{}", a.r#box, a.name),
+                    note: retired.then(|| format!("retired, {id}")),
+                    href,
+                    state: state_word(Some(a), setup, granted),
+                    alerts: if granted { open_on(id) } else { 0 },
+                },
+            )
         })
         .collect();
-    let chrome = match super::Chrome::of(&store, &session.person_id).await {
-        Ok(chrome) => chrome,
-        Err(e) => return fault(e),
-    };
+    if admin {
+        for (setup, declared) in setups.iter().filter(|(s, _)| s.in_pairing_step()) {
+            rows.push((
+                (
+                    setup.name.clone(),
+                    String::new(),
+                    false,
+                    setup.setup_id.clone(),
+                ),
+                ListRow {
+                    label: setup.name.clone(),
+                    note: None,
+                    href: super::setup::declaration_href(setup),
+                    state: state_word(None, Some((setup, *declared)), false),
+                    alerts: 0,
+                },
+            ));
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
     match (ListPage {
         here: "agents",
         who: session.name,
         admin,
         chrome,
-        rows,
+        rows: rows.into_iter().map(|(_, row)| row).collect(),
     })
     .render()
     {
@@ -488,8 +552,6 @@ struct AgentPage {
     /// The stage rail and what is left.
     stages: Vec<StageView>,
     left: String,
-    /// The way back to the agent's declaration, an admin's alone.
-    declared: Option<DeclaredLink>,
     /// **The page's wait for an ask's answer**, the silence bound in
     /// seconds, which the asking lines name.
     wait: u64,
@@ -1016,10 +1078,13 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
     }
     let head = Head::of(&named);
     let declaration = DeclarePane::of(&store, &row, head, admin, &session.person_id).await;
-    let declared = admin.then(|| DeclaredLink::of(&row.name, head));
-    let links: Vec<(u8, String)> = match &declared {
-        Some(link) => vec![(1, link.href.clone()), (2, "/admin/agents".to_owned())],
-        None => Vec::new(),
+    // **No screen writes a declaration now** (the Planner's brief of
+    // 2026-11-28, part 5): the rail links Provision alone, an admin's, and
+    // the Agents list opens the agent's declaration on the setup pages.
+    let links: Vec<(u8, String)> = if admin {
+        vec![(2, "/admin/agents".to_owned())]
+    } else {
+        Vec::new()
     };
     let can_ack = roles.iter().any(|r| r == "operator");
     let carries = |verb: &str| granted.contains(verb) && ceiling.iter().any(|c| c == verb);
@@ -1108,7 +1173,6 @@ async fn page(store: Store, seams: &Seams, headers: HeaderMap, agent: String) ->
         prompt,
         stages: stages(&links),
         left: left(),
-        declared,
         wait: seams.asker.silence().as_secs(),
         declaration,
     };

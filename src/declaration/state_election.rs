@@ -1,4 +1,4 @@
-//! conforms: web-the-screens-state-election-is-the-agents-as-read
+//! conforms: web-the-documents-state-election-is-the-agents-as-read
 //! conforms: web-a-state-election-names-only-the-kinds-that-cross
 //!
 //! **The state election** (Spec 6.1): the tee's election, `[state-election]`

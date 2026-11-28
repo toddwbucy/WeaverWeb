@@ -1,11 +1,12 @@
 {% extends "setup_frame.html" %}
 {% block panes %}
-{#- The build page (Spec 6.2): one pane, unbuilt, linking the declaration
-    screen as built. -#}
+{#- The build page (Spec 6.2): one pane, unbuilt, saying that the
+    console does not declare the fields no setup page asks yet, and that a
+    load does not need them (the Planner's brief of 2026-11-28, part 5). -#}
 <section class="pane">
   <header><span class="stage"><b>1</b> Declare</span><h2>Build</h2><span class="backing unbuilt">unbuilt</span><span class="status hold">hold</span></header>
   <div class="body">
-  <p>The appliance's setup script lays the agent's account and its folder at the pairing. The box lays the rest of the agent from the deployment tuple once Confirm stands. The fields no setup page asks are on <a href="/declarations">the declaration screen</a>, as built.</p>
+  <p>The appliance's setup script lays the agent's account and its folder at the pairing. The box lays the rest of the agent from the deployment tuple once Confirm stands. The console does not declare the fields no setup page asks yet, such as the sampler's values, the elections and the prompt. A load does not need them.</p>
   </div>
   <footer>{% if frame.state == "confirmed" %}Confirm stands. Waits on the rulings that hold the board and the prompt tuple panel.{% else %}Waits on Confirm. The board and the prompt tuple panel are held by the rulings.{% endif %}</footer>
 </section>

@@ -395,6 +395,9 @@ pub struct Described {
     /// The members the agent is laid from, absent until Confirm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub laying: Option<DescribedLaying>,
+    /// **Always empty** (the Planner's brief of 2026-11-28, part 5): the
+    /// appliance ships with SSH off and no SSH key goes down. The member
+    /// stands for its reader's shape.
     pub ssh_keys: Vec<DescribedKey>,
 }
 
@@ -446,7 +449,8 @@ pub struct DescribedAdapter {
     pub scale: f64,
 }
 
-/// One of the operator's SSH keys, as stored, with its OpenSSH fingerprint.
+/// An SSH key as the member once carried it, with its OpenSSH fingerprint;
+/// none is sent now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DescribedKey {
     pub key: String,

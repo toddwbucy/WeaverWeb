@@ -106,12 +106,6 @@ pub enum Refusal {
     SetupNameHeldUnpaired(String),
     /// No such setup (Spec 6.2).
     NoSuchSetup,
-    /// No such SSH public key (Spec 6.2).
-    NoSuchKey,
-    /// The SSH public key is held already (Spec 6.2).
-    KeyHeld,
-    /// The console holds as many SSH public keys as it keeps (Spec 6.2).
-    KeysFull,
     /// Hugging Face holds no such repository at the revision, or none the
     /// account may see (Spec 6.2).
     NoSuchModel,
@@ -241,19 +235,13 @@ impl std::fmt::Display for Refusal {
             ),
             Refusal::SetupNameHeld(name) => write!(
                 f,
-                "an open setup holds the name {name}, and one setup holds a name at a time, so choose another name, or continue that agent under Declarations"
+                "an open setup holds the name {name}, and one setup holds a name at a time, so choose another name, or continue that agent from the Agents list"
             ),
             Refusal::SetupNameHeldUnpaired(name) => write!(
                 f,
                 "an open setup holds the name {name}, and one setup holds a name at a time; its appliance is not paired, so choose another name, or pair it on its own Pair page, listed below"
             ),
             Refusal::NoSuchSetup => write!(f, "no such setup"),
-            Refusal::NoSuchKey => write!(f, "no such SSH key"),
-            Refusal::KeyHeld => write!(f, "that SSH key is held already"),
-            Refusal::KeysFull => write!(
-                f,
-                "the console holds 16 SSH keys, the most it keeps, so remove one first"
-            ),
             Refusal::NoSuchModel => write!(
                 f,
                 "Hugging Face holds no such repository at that revision, or none the account may see"

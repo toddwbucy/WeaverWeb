@@ -403,7 +403,7 @@ async fn the_pair_page_lists_the_waiting_box_as_it_claims() {
 /// alone" and never present; the box hears its answer, the console's
 /// authority among it and no gate certificate, and then `paired`. **The
 /// Pair page leads into the declaration**: once paired, its way on is the
-/// declaration's first page, Declarations lists the agent and New agent
+/// declaration's first page, and New agent
 /// no longer does. Its paired line says the appliance's setup script now
 /// lays the agent's account and its folder under the agent's name (the
 /// operator's words of 2026-11-25).
@@ -490,11 +490,6 @@ async fn a_pairing_issues_one_certificate_and_leaves_the_gate_not_enrolled() {
             r#"<p class="next">Next: <a href="/setup/{setup}/directories">Directories</a></p>"#
         )),
         "{pairing}"
-    );
-    let declarations = page(&rig.app, "/setup", &ada).await;
-    assert!(
-        declarations.contains(&format!(r#"<a href="/setup/{setup}/directories">karl</a>"#)),
-        "{declarations}"
     );
     let pair = page(&rig.app, "/pair", &ada).await;
     assert!(!pair.contains(&setup), "{pair}");
@@ -2366,7 +2361,7 @@ async fn the_reports_a_box_sends_feed_placement_and_confirm() {
         "{models}"
     );
     assert!(
-        models.contains("<p>A tag or a 40-hex commit is taken in the branch's place too.</p>"),
+        models.contains("<p>A tag or a 40-hex commit is taken in the branch's place too. The model's pick is offered here, and the adapter's step follows it.</p>"),
         "{models}"
     );
     let offered = read(placement.clone()).await;
@@ -2939,14 +2934,9 @@ async fn the_panes_are_served_in_each_status_as_the_box_reports() {
         report.contains("No model is picked, so its free space is not judged."),
         "{report}"
     );
-    // The SSH key page opens in a new tab, so the setup stays open (the
-    // operator's walk of 2026-11-19).
-    assert!(
-        shown.contains(
-            r#"<a href="/admin/ssh-key" target="_blank" rel="noopener">Change the keys</a>, in a new tab, so this setup stays open here."#
-        ),
-        "{shown}"
-    );
+    // No SSH key goes down: the appliance ships with SSH off (the Planner's
+    // brief of 2026-11-28, part 5).
+    assert!(!shown.contains("/admin/ssh-key"), "{shown}");
     assert!(crate::setup_tests::walk(&shown).is_empty());
 }
 
@@ -3479,20 +3469,47 @@ async fn on_an_unknown_outcome_new_agent_draws_the_registers_rows_holding_the_na
 /// the name as typed and the chosen appliance kept, and the code's field
 /// empty. Each is still no miss: no record, no setup, the appliance still
 /// listed with every try left. Whoever is not an admin is answered as New
-/// agent's own page answers them, with no record.
+/// agent's own page answers them, with no record. **Each refusal stands at
+/// the top of the form, in a fail status**, the form posting to
+/// `/pair#finalize` so the browser lands there, **and each is logged** with
+/// its refusal and the admin who posted, the code never (the Planner's brief
+/// of 2026-11-28, part 2), the code's miss after them too.
 ///
 /// Perturbation: answer the four with bare text, as before, and the first
-/// post's body is the words alone, with no form (measured 2026-11-26).
+/// post's body is the words alone, with no form (measured 2026-11-26); draw
+/// the refusal above the panes again, or post to `/pair` with no fragment,
+/// and the first fails at the form's top; drop the log line, and the first
+/// is not logged (each measured 2026-11-28).
 #[tokio::test]
 async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
+    let logs = crate::test_log::Captured::default();
+    let _logging = crate::test_log::scoped(
+        tracing_subscriber::fmt()
+            .with_writer(logs.clone())
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .finish(),
+    );
     let Some(rig) = rig().await else { return };
     let s = rig.store();
-    let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
+    let (ada_id, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, bea) = crate::admin_tests::signed_in(&rig.app, s, &mut authenticator(), "bea").await;
     let dialed = dial(&rig, &box_keys("box-a").claim).await;
     let code = dialed.code().to_string();
     let a = handle_of(&rig, "box-a").await;
     let refused_name = crate::store::setup::agent_name("9karl").unwrap_err();
+    let logged = |refusal: &str| {
+        let text = String::from_utf8_lossy(&logs.0.lock().unwrap()).into_owned();
+        text.lines()
+            .filter(|line| {
+                line.contains("WARN")
+                    && line.contains("New agent's Finalize was refused")
+                    && line.contains(&format!("refusal=\"{refusal}\""))
+                    && line.contains(&format!("by={ada_id}"))
+            })
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
     for (name, appliance, typed, compared, words, kept) in [
         ("9karl", a.as_str(), code.as_str(), "on", refused_name, true),
         (
@@ -3508,7 +3525,7 @@ async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
             a.as_str(),
             "abc",
             "on",
-            "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the SSH session shows it: check it and type it again",
+            "the code is ten characters of 0-9 and A-Z without I, L, O and U, as the appliance&#39;s console shows it: check it and type it again",
             true,
         ),
         (
@@ -3527,7 +3544,13 @@ async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
         let (status, _, body) = send_as(&rig.app, "POST", "/pair", Some(form(&fields)), &ada).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{words}: {body}");
         assert!(body.contains("<h1>New agent</h1>"), "{words}: {body}");
-        assert!(body.contains(words), "{words}: {body}");
+        assert!(
+            body.contains(&format!(
+                "<form method=\"post\" action=\"/pair#finalize\" id=\"finalize\" class=\"stack\">\n<p class=\"note\" role=\"alert\"><span class=\"status fail\">fail</span> {words}</p>"
+            )),
+            "{words}: at the top of the form: {body}"
+        );
+        assert_eq!(body.matches(r#"role="alert""#).count(), 1, "{words}");
         assert!(
             body.contains(&format!(r#"name="name" value="{name}""#)),
             "{words}: the name kept: {body}"
@@ -3565,6 +3588,18 @@ async fn a_malformed_entry_on_new_agent_is_drawn_back_into_the_form() {
     let (status, _, body) = finalize(&rig, &ada, "karl", &a, wrong).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("2 tries are left on it."), "{body}");
+    for refusal in [
+        "malformed name",
+        "no appliance",
+        "malformed code",
+        "not compared",
+        "code missed",
+    ] {
+        let lines = logged(refusal);
+        assert_eq!(lines.len(), 1, "{refusal}: {lines:?}");
+        assert!(!lines[0].contains(&code), "the code is never logged");
+    }
+    assert!(logged("malformed name")[0].contains(r#"name="9karl""#));
     drop(dialed);
 }
 
@@ -3802,14 +3837,14 @@ async fn a_name_an_open_setup_holds_is_refused_before_any_code_is_compared() {
     assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
     let (_, last) = the_box.await.unwrap();
     assert_eq!(last, Some(LastWord::Paired));
-    // A paired holder keeps the sentence that continues under Declarations.
+    // A paired holder keeps the sentence that continues from the Agents list.
     let dialed = dial(&rig, &box_keys("box-b").claim).await;
     let code = dialed.code().to_string();
     let handle = handle_of(&rig, "box-b").await;
     let (status, _, body) = finalize(&rig, &ada, "otto", &handle, &code).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(
-        body.contains("so choose another name, or continue that agent under Declarations</p>"),
+        body.contains("so choose another name, or continue that agent from the Agents list</p>"),
         "{body}"
     );
     assert!(!body.contains("its appliance is not paired"), "{body}");

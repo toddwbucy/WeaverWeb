@@ -789,7 +789,16 @@ async fn every_pane_carries_its_stage_backing_and_status() {
         "{shown}"
     );
     new_agent.push(("the Pair page, paired".to_owned(), shown));
-    for p in ["directories", "models", "placement", "confirm", "build"] {
+    // The adapter's page is walked last of the six, so the indexes the
+    // checks below read stand as they stood before it.
+    for p in [
+        "directories",
+        "models",
+        "placement",
+        "confirm",
+        "build",
+        "adapter",
+    ] {
         let uri = format!("/setup/{setup}/{p}");
         walked.push((uri.clone(), page(&rig.app, &uri, &ada).await));
     }
@@ -840,19 +849,26 @@ async fn every_pane_carries_its_stage_backing_and_status() {
             "{uri}: no setup rail"
         );
     }
-    // Every page of a setup carries the rail of its five pages in order,
+    // Every page of a setup carries the rail of its six pages in order,
     // the current one marked, each served, and none of them Pairing.
     let directories = &walked[0].1;
     let rail = between(directories, r#"<nav class="rail""#, "</nav>").unwrap();
-    let order: Vec<usize> = ["Directories", "Models", "Placement", "Confirm", "Build"]
-        .iter()
-        .map(|t| {
-            rail.find(&format!("</span> {t}"))
-                .unwrap_or_else(|| panic!("{t}: {rail}"))
-        })
-        .collect();
+    let order: Vec<usize> = [
+        "Directories",
+        "Models",
+        "Adapter",
+        "Placement",
+        "Confirm",
+        "Build",
+    ]
+    .iter()
+    .map(|t| {
+        rail.find(&format!("</span> {t}"))
+            .unwrap_or_else(|| panic!("{t}: {rail}"))
+    })
+    .collect();
     assert!(order.windows(2).all(|w| w[0] < w[1]), "{rail}");
-    assert_eq!(rail.matches(r#"<a class="step"#).count(), 5, "{rail}");
+    assert_eq!(rail.matches(r#"<a class="step"#).count(), 6, "{rail}");
     assert!(
         rail.contains(&format!(
             r#"<a class="step here" href="/setup/{setup}/directories">"#
@@ -892,7 +908,8 @@ async fn every_pane_carries_its_stage_backing_and_status() {
     );
     for (at, next) in [
         (0, "models\">Models"),
-        (1, "placement\">Placement"),
+        (1, "adapter\">Adapter"),
+        (5, "placement\">Placement"),
         (2, "confirm\">Confirm"),
     ] {
         assert!(
@@ -991,7 +1008,14 @@ async fn a_declaration_opens_once_its_box_is_paired() {
     let (_, ada) = admin(&rig.app, s, &mut authenticator(), "ada").await;
     let (_, _, setup) = begin(rig.store(), &ada, "karl").await;
     let setup = setup.unwrap();
-    for p in ["directories", "models", "placement", "confirm", "build"] {
+    for p in [
+        "directories",
+        "models",
+        "adapter",
+        "placement",
+        "confirm",
+        "build",
+    ] {
         let uri = format!("/setup/{setup}/{p}");
         let (status, headers, body) = send_as(&rig.app, "GET", &uri, None, &ada).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{uri}: {body}");
@@ -1564,7 +1588,14 @@ async fn new_agent_holds_what_an_agent_needs_the_steps_and_one_form() {
     others.push(format!("/pair/{setup}"));
     none_hold_it(&rig.app, &ada, &others, "begun the old way, unpaired").await;
     paired(s, &setup).await;
-    for p in ["directories", "models", "placement", "confirm", "build"] {
+    for p in [
+        "directories",
+        "models",
+        "adapter",
+        "placement",
+        "confirm",
+        "build",
+    ] {
         others.push(format!("/setup/{setup}/{p}"));
     }
     none_hold_it(&rig.app, &ada, &others, "paired").await;

@@ -117,19 +117,25 @@ pub(crate) const FIRST_PASSWORD: &str = "Its first password";
 /// page of the setup: it is New agent's, before the declaration.
 /// **The declaration starts at directories** (the operator's ruling of
 /// 2026-11-23: "The declaration starts at directories, not drives").
+/// **The adapter's step comes right after the model's** (the operator's
+/// words of 2026-11-27, the Planner's brief of 2026-11-28, part 4): the
+/// decoder is picked on Models, and its pick lands on Adapter, which picks
+/// an adapter from a repository or goes on with none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Directories,
     Models,
+    Adapter,
     Placement,
     Confirm,
     Build,
 }
 
 impl Page {
-    const ALL: [Page; 5] = [
+    const ALL: [Page; 6] = [
         Page::Directories,
         Page::Models,
+        Page::Adapter,
         Page::Placement,
         Page::Confirm,
         Page::Build,
@@ -138,6 +144,7 @@ impl Page {
     fn slug(self) -> &'static str {
         match self {
             Page::Models => "models",
+            Page::Adapter => "adapter",
             Page::Directories => "directories",
             Page::Placement => "placement",
             Page::Confirm => "confirm",
@@ -148,6 +155,7 @@ impl Page {
     fn title(self) -> &'static str {
         match self {
             Page::Models => "Models",
+            Page::Adapter => "Adapter",
             Page::Directories => "Directories",
             Page::Placement => "Placement",
             Page::Confirm => "Confirm",
@@ -920,7 +928,7 @@ async fn page(
         }
         .render(),
         // Each is its child module's, never routed here.
-        Page::Models | Page::Placement | Page::Confirm => {
+        Page::Models | Page::Adapter | Page::Placement | Page::Confirm => {
             return StatusCode::NOT_FOUND.into_response();
         }
     };
